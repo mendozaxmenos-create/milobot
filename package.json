@@ -1,0 +1,35 @@
+{
+  "name": "whatsapp-assistant-bot",
+  "version": "1.0.0",
+  "description": "Bot asistente personal para WhatsApp con IA, calendario y gestión de gastos",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "assistant",
+    "ai",
+    "calendar",
+    "expenses"
+  ],
+  "author": "Tu Nombre",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.32.1",
+    "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.4.5",
+    "googleapis": "^165.0.0",
+    "node-cron": "^3.0.3",
+    "qrcode-terminal": "^0.12.0",
+    "whatsapp-web.js": "^1.34.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
