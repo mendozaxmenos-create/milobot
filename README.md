@@ -1,12 +1,22 @@
 # 🤖 Milo - Bot Asistente Personal para WhatsApp
 
-Bot inteligente de WhatsApp con funcionalidades de calendario, gestión de gastos e IA integrada.
+Bot inteligente de WhatsApp con funcionalidades de calendario, pronóstico del tiempo, gestión de gastos e IA integrada.
 
 ## ✨ Características
 
+### 🌤️ Módulo de Pronóstico del Tiempo
+- ✅ Pronóstico del tiempo para hoy
+- ✅ Detección automática de ubicación por IP
+- ✅ Configuración manual de ciudad
+- ✅ Recomendaciones de vestimenta según el clima
+- ✅ Alertas de lluvia y condiciones climáticas
+- ✅ Guardado de ubicación preferida
+
 ### 📅 Módulo de Calendario
-- ✅ Ver agenda de hoy
+- ✅ Ver agenda de hoy (eventos y recordatorios)
 - ✅ Agregar eventos con lenguaje natural
+- ✅ **Recordatorios** con o sin fecha programada
+- ✅ Completar/marcar recordatorios como realizados
 - ✅ Próximos eventos (7, 15, 30 días)
 - ✅ Editar y eliminar eventos
 - ✅ Eventos recurrentes (diario, semanal, mensual)
@@ -14,7 +24,9 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, gestión de gasto
 - ✅ Vista mensual
 - ✅ Búsqueda de eventos
 - ✅ Categorías (Personal, Trabajo, Urgente, Familia)
+- ✅ Invitar contactos a eventos
 - ✅ Sincronización con Google Calendar
+- ✅ Parsing avanzado de fechas naturales (ej: "domingo 30 de noviembre")
 
 ### 💰 Módulo de Gastos
 - ✅ Crear grupos de gastos
@@ -32,7 +44,17 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, gestión de gasto
 ### 📝 Sistema de Feedback
 - ✅ Reportar bugs
 - ✅ Enviar sugerencias
-- ✅ Panel de administración
+- ✅ Panel de administración básico
+
+## 🚧 Próximas Funcionalidades
+
+Consulta el [ROADMAP.md](ROADMAP.md) para ver el plan completo. Algunas funcionalidades en desarrollo:
+
+- 📱 **Programar mensajes de WhatsApp** - Enviar mensajes a contactos en fecha/hora específica
+- 🍎 **Contador de calorías por IA** - Analizar fotos de comida para contar calorías
+- 🏪 **Marketplace de módulos** - Instalar módulos opcionales según necesidades
+- 🔐 **Bóveda de información personal** - Almacenar documentos, pólizas, información sensible
+- 📊 **Panel de administración avanzado** - Métricas de uso, usuarios activos, funciones más utilizadas
 
 ## 🚀 Instalación
 
@@ -40,6 +62,7 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, gestión de gasto
 - Node.js >= 18.0.0
 - Cuenta de WhatsApp
 - (Opcional) API Key de Anthropic para IA
+- (Opcional) API Key de OpenWeatherMap para pronóstico del tiempo
 - (Opcional) Credenciales de Google Calendar
 
 ### Pasos
@@ -58,7 +81,13 @@ npm install
 3. **Configurar variables de entorno**
 Crea un archivo `.env` en la raíz del proyecto:
 ```env
+# IA (Opcional)
 ANTHROPIC_API_KEY=tu_api_key_aqui
+
+# Pronóstico del Tiempo (Opcional pero recomendado)
+OPENWEATHER_API_KEY=tu_api_key_openweather
+
+# Google Calendar (Opcional)
 GOOGLE_CLIENT_ID=tu_client_id
 GOOGLE_CLIENT_SECRET=tu_client_secret
 GOOGLE_REDIRECT_URI=http://localhost:3000/oauth2callback
@@ -80,9 +109,11 @@ npm start
 
 **En chat privado:**
 - `hola` o `menu` - Mostrar menú principal
-- `1` - Calendario & Recordatorios
-- `2` - Dividir Gastos
-- `3` - Asistente IA
+- `1` - 🌤️ Pronóstico para hoy
+- `2` - 📅 Calendario & Recordatorios
+- `3` - 💰 Dividir Gastos
+- `4` - 🤖 Asistente IA
+- `recordatorios` - Ver y completar recordatorios (comando rápido)
 - `/feedback [mensaje]` - Enviar feedback
 - `/bug [descripción]` - Reportar error
 
@@ -95,13 +126,46 @@ npm start
 
 ### Ejemplos de Uso
 
+**Pronóstico del tiempo:**
+```
+Usuario: 1 (Pronóstico)
+Bot: [Detectando ubicación automáticamente...]
+Bot: ☀️ Pronóstico para Hoy - Mendoza, AR
+     🌡️ Temperatura: 23°C
+     💡 Recomendaciones:
+     ☀️ Hace calor - No hace falta que lleves abrigo
+```
+
 **Crear evento:**
 ```
-Usuario: 1 (Calendario)
+Usuario: 2 (Calendario)
 Bot: [Menú de calendario]
 Usuario: 2 (Agregar evento)
 Usuario: Reunión cliente | mañana | 10:00 | trabajo
 Bot: ✅ Evento agregado
+```
+
+**Crear recordatorio:**
+```
+Usuario: 2 (Calendario)
+Usuario: 3 (Agregar recordatorio)
+Usuario: Llamar a mamá
+Bot: ⏰ Sin fecha detectada
+     ¿Querés programar este recordatorio para un día específico?
+Usuario: 2 (No, dejarlo sin fecha)
+Bot: ✅ Recordatorio guardado
+```
+
+**Ver y completar recordatorios:**
+```
+Usuario: recordatorios
+Bot: ⏰ Tus Recordatorios
+     1. ⏰ Llamar a mamá
+        📅 Sin fecha programada
+     2. ⏰ Comprar leche
+        📅 Lunes 15 de Noviembre 2025 - 10:00
+Usuario: 2
+Bot: ✅ Recordatorio completado
 ```
 
 **Dividir gastos:**
@@ -119,22 +183,36 @@ Bot: [Resumen de gastos]
 milobot/
 ├── index.js                 # Archivo principal
 ├── modules/
-│   └── calendar-module/     # Módulo de calendario completo
+│   ├── calendar-module/      # Módulo de calendario completo
+│   │   ├── index.js
+│   │   ├── handlers.js
+│   │   ├── database.js
+│   │   ├── google.js
+│   │   ├── notifications.js
+│   │   ├── menus.js
+│   │   ├── utils.js
+│   │   └── README.md
+│   └── weather-module/       # Módulo de pronóstico del tiempo
 │       ├── index.js
-│       ├── handlers.js
-│       ├── database.js
-│       ├── google.js
-│       ├── notifications.js
-│       ├── menus.js
-│       ├── utils.js
-│       └── README.md
+│       ├── weather-api.js
+│       └── database.js
 ├── data/
-│   └── database.db         # Base de datos SQLite
+│   └── database.db          # Base de datos SQLite
+├── run-migrations.js        # Script de migraciones de BD
 ├── package.json
-└── README.md
+├── README.md
+└── ROADMAP.md               # Hoja de ruta del proyecto
 ```
 
 ## 🔧 Configuración Avanzada
+
+### OpenWeatherMap (Pronóstico del Tiempo)
+1. Ve a [OpenWeatherMap](https://openweathermap.org/api)
+2. Crea una cuenta gratuita
+3. Obtén tu API Key
+4. Agrega `OPENWEATHER_API_KEY=tu_api_key` al archivo `.env`
+
+**Nota:** Sin API Key, el bot puede detectar tu ubicación pero no mostrará el pronóstico completo.
 
 ### Google Calendar
 1. Ve a [Google Cloud Console](https://console.cloud.google.com/)
@@ -149,10 +227,12 @@ Las notificaciones se envían automáticamente X minutos antes de cada evento. P
 ## 🛠️ Tecnologías Utilizadas
 
 - **whatsapp-web.js** - Cliente de WhatsApp
-- **better-sqlite3** - Base de datos
+- **better-sqlite3** - Base de datos SQLite
 - **@anthropic-ai/sdk** - IA con Claude
 - **googleapis** - Integración con Google Calendar
+- **OpenWeatherMap API** - Pronóstico del tiempo
 - **node-cron** - Notificaciones programadas
+- **dotenv** - Gestión de variables de entorno
 
 ## 📝 Licencia
 
