@@ -134,6 +134,12 @@ db.exec(`
     FOREIGN KEY (user_phone) REFERENCES users(phone)
   );
 
+CREATE TABLE IF NOT EXISTS user_invites (
+  phone TEXT PRIMARY KEY,
+  invited_by TEXT,
+  invited_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
   CREATE TABLE IF NOT EXISTS classroom_courses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_phone TEXT NOT NULL,
@@ -304,6 +310,92 @@ function registerUser(phone, name = null) {
   return { isNewUser };
 }
 
+function isUserRegistered(phone) {
+  if (!phone) {
+    return false;
+  }
+  const row = db.prepare('SELECT 1 FROM users WHERE phone = ?').get(phone);
+  return Boolean(row);
+}
+
+function hasPendingInvite(phone) {
+  if (!phone) {
+    return false;
+  }
+  const row = db.prepare('SELECT 1 FROM user_invites WHERE phone = ?').get(phone);
+  return Boolean(row);
+}
+
+function recordInvite(phone, invitedBy = null) {
+  if (!phone) {
+    return;
+  }
+  const stmt = db.prepare(`
+    INSERT INTO user_invites (phone, invited_by, invited_at)
+    VALUES (?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(phone) DO UPDATE SET
+      invited_at = CURRENT_TIMESTAMP,
+      invited_by = COALESCE(?, invited_by)
+  `);
+  stmt.run(phone, invitedBy, invitedBy);
+}
+
+async function inviteMissingGroupMembers(participants = [], inviterPhone = null, inviterName = 'Un integrante del grupo') {
+  if (!participants || participants.length === 0) {
+    return;
+  }
+
+  const normalizedInviterPhone = inviterPhone ? inviterPhone.replace(/\D/g, '') : null;
+
+  for (const participant of participants) {
+    try {
+      const serializedId = participant?.id?._serialized || '';
+      if (!serializedId || serializedId.includes('bot')) {
+        continue;
+      }
+
+      const participantPhone = participant?.id?.user;
+      if (!participantPhone) {
+        continue;
+      }
+
+      if (normalizedInviterPhone && participantPhone === normalizedInviterPhone) {
+        continue;
+      }
+
+      if (isUserRegistered(participantPhone) || hasPendingInvite(participantPhone)) {
+        continue;
+      }
+
+      let friendName = participant?.pushname || participant?.name || null;
+      if (!friendName) {
+        try {
+          const contact = await client.getContactById(serializedId);
+          friendName = contact?.pushname || contact?.name || contact?.number || null;
+        } catch (error) {
+          console.warn('[WARN] No se pudo obtener contacto para invitación:', error.message);
+        }
+      }
+
+      const inviteResult = await sendFriendInviteMessage(
+        client,
+        inviterName || 'Un integrante del grupo',
+        normalizedInviterPhone,
+        friendName || 'Tu amigo',
+        participantPhone
+      );
+
+      if (inviteResult.success) {
+        recordInvite(participantPhone, normalizedInviterPhone);
+      } else if (inviteResult.error && inviteResult.error.toLowerCase().includes('no está registrado')) {
+        recordInvite(participantPhone, normalizedInviterPhone);
+      }
+    } catch (error) {
+      console.error('[ERROR] invitando miembro del grupo:', error);
+    }
+  }
+}
+
 function getSession(phone) {
   const stmt = db.prepare('SELECT * FROM sessions WHERE user_phone = ?');
   return stmt.get(phone);
@@ -376,6 +468,140 @@ function addExpense(groupId, payerPhone, amount, description) {
   `);
   stmt.run(groupId, payerPhone, amount, description);
   return { success: true };
+}
+
+function getActiveExpenseGroupForChat(chatId) {
+  return db.prepare(`
+    SELECT id, name, created_at
+    FROM expense_groups
+    WHERE creator_phone = ? AND IFNULL(is_closed, 0) = 0
+    ORDER BY created_at DESC
+    LIMIT 1
+  `).get(chatId);
+}
+
+function updateExpenseGroupName(expenseGroupId, newName) {
+  db.prepare(`
+    UPDATE expense_groups
+    SET name = ?
+    WHERE id = ?
+  `).run(newName, expenseGroupId);
+}
+
+function convertRawPhone(raw = '') {
+  if (!raw) {
+    return null;
+  }
+  return raw.replace(/\D/g, '');
+}
+
+function getParticipantDisplayName(participant) {
+  if (!participant) {
+    return 'Participante';
+  }
+  return participant.pushname || participant.name || participant.id?.user || 'Participante';
+}
+
+function syncGroupParticipants(expenseGroupId, participants = []) {
+  if (!participants || !participants.length) {
+    return 0;
+  }
+
+  const existing = db.prepare(`
+    SELECT phone FROM group_participants WHERE group_id = ?
+  `).all(expenseGroupId).map(row => row.phone);
+  const existingSet = new Set(existing);
+
+  const insertStmt = db.prepare(`
+    INSERT INTO group_participants (group_id, phone, name)
+    VALUES (?, ?, ?)
+  `);
+
+  const toInsert = [];
+  for (const participant of participants) {
+    const phone = convertRawPhone(participant?.id?.user);
+    if (!phone || existingSet.has(phone)) {
+      continue;
+    }
+    const name = getParticipantDisplayName(participant);
+    toInsert.push({ phone, name });
+    existingSet.add(phone);
+  }
+
+  if (toInsert.length) {
+    const insertMany = db.transaction(items => {
+      items.forEach(item => {
+        insertStmt.run(expenseGroupId, item.phone, item.name);
+      });
+    });
+
+    try {
+      insertMany(toInsert);
+    } catch (error) {
+      console.error('[ERROR] syncGroupParticipants:', error.message);
+    }
+  }
+
+  return toInsert.length;
+}
+
+function formatAmount(amount) {
+  const numeric = Number(amount) || 0;
+  return numeric.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function parseGroupExpenseMessage(rawText = '') {
+  if (!rawText) {
+    return null;
+  }
+
+  const cleaned = rawText.replace(/@\S+/g, ' ').trim();
+  const lower = cleaned.toLowerCase();
+
+  if (lower.startsWith('crear') || lower.includes(' crear ')) {
+    const createMatch = cleaned.match(/crear\s+(.+)/i);
+    let groupLabel = createMatch && createMatch[1] ? createMatch[1].trim() : null;
+    if (groupLabel) {
+      groupLabel = groupLabel.replace(/[.,;:]+$/g, '').trim();
+    }
+    return { type: 'create', raw: cleaned, lower, name: groupLabel };
+  }
+
+  if (lower.includes('resumen') || lower.includes('estado')) {
+    return { type: 'summary' };
+  }
+
+  if (lower.includes('calcular') || lower.includes('dividir')) {
+    return { type: 'calculate' };
+  }
+
+  const amountRegex = /(gasto|gasté|gaste|pagué|pague|pago)?\s*(\d+[.,]?\d*)/i;
+  const match = cleaned.match(amountRegex);
+  if (!match || !match[2]) {
+    return null;
+  }
+
+  const normalizedAmount = match[2]
+    .replace(/\./g, '')
+    .replace(',', '.');
+  const amount = parseFloat(normalizedAmount);
+  if (Number.isNaN(amount) || amount <= 0) {
+    return null;
+  }
+
+  let description = cleaned.slice(match.index + match[0].length).trim();
+  description = description.replace(/^(en|para|por)\s+/i, '');
+  if (!description) {
+    description = 'Gasto registrado';
+  }
+
+  return {
+    type: 'expense',
+    amount,
+    description,
+    cleaned,
+    lower
+  };
 }
 
 function getExpenseSummary(groupId) {
@@ -593,15 +819,105 @@ function getExpensesMenu() {
   return '💰 *Dividir Gastos*\n\n1. Crear nuevo grupo\n2. Mis grupos activos\n3. Volver al menú\n\n¿Qué deseas hacer?\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.';
 }
 
+async function handleGroupMention({ msg, groupChat, groupId, groupName, rawMessage, inviterPhone, inviterName }) {
+  const parsed = parseGroupExpenseMessage(rawMessage);
+  if (!parsed) {
+    return false;
+  }
+
+  if (parsed.type === 'create') {
+    const baseName = parsed.name && parsed.name.trim().length
+      ? parsed.name.trim().replace(/\s+/g, ' ')
+      : `Gastos ${groupName}`;
+    const finalName = baseName.charAt(0).toUpperCase() + baseName.slice(1);
+
+    try {
+      db.prepare(`
+        UPDATE expense_groups
+        SET is_closed = 1
+        WHERE creator_phone = ?
+      `).run(groupId);
+    } catch (error) {
+      console.error('[WARN] No se pudo cerrar grupos anteriores:', error.message);
+    }
+
+    const creationResult = createExpenseGroup(finalName, groupId);
+    const expenseGroupId = creationResult.groupId;
+
+    const participants = groupChat.participants || [];
+    const addedParticipants = syncGroupParticipants(expenseGroupId, participants);
+    await inviteMissingGroupMembers(participants, inviterPhone, inviterName);
+
+    const totalHumanParticipants = participants.filter(p => {
+      const serialized = p?.id?._serialized || '';
+      return serialized && !serialized.includes('bot');
+    }).length;
+
+    const commandsHelp = '💰 *Comandos disponibles en este grupo:*\n' +
+      '• `/gasto 5000 | Pizza | Juan`\n' +
+      '• `/resumen`\n' +
+      '• `/calcular`\n\n' +
+      'También podés escribirme por privado con *hola* o *menu* para más opciones.';
+
+    let response = `🎉 *¡Listo! Activé el grupo de gastos "${finalName}".*\n\n`;
+    response += `👥 Participantes detectados: ${totalHumanParticipants}\n`;
+    if (addedParticipants > 0) {
+      response += `✅ Registré ${addedParticipants} participante(s) para seguir los gastos.\n\n`;
+    } else {
+      response += '\n';
+    }
+    response += commandsHelp;
+
+    await msg.reply(response);
+    return true;
+  }
+
+  return false;
+}
+
 // ============================================
 // MANEJADOR DE MENSAJES DE GRUPOS
 // ============================================
 
 async function handleGroupMessage(msg) {
-  const messageText = msg.body.toLowerCase().trim();
+  const rawMessage = msg.body || '';
+  const messageText = rawMessage.toLowerCase().trim();
   const groupId = msg.from;
   const groupChat = await msg.getChat();
   const groupName = groupChat.name || 'Grupo sin nombre';
+
+  let inviterPhone = null;
+  let inviterName = 'Un integrante del grupo';
+  try {
+    if (msg.author) {
+      inviterPhone = msg.author.replace('@c.us', '');
+    }
+    const authorContact = await msg.getContact();
+    inviterName = authorContact.pushname || authorContact.name || authorContact.number || inviterName;
+  } catch (error) {
+    console.warn('[WARN] No se pudo obtener datos del remitente del grupo:', error.message);
+  }
+
+  const mentionedBot = botWid && Array.isArray(msg.mentionedIds) && msg.mentionedIds.includes(botWid);
+
+  if (mentionedBot) {
+    const handled = await handleGroupMention({
+      msg,
+      groupChat,
+      groupId,
+      groupName,
+      rawMessage,
+      inviterPhone,
+      inviterName
+    });
+    if (handled) {
+      return;
+    }
+  }
+
+  if (groupChat.participants && groupChat.participants.length > 0) {
+    await inviteMissingGroupMembers(groupChat.participants, inviterPhone, inviterName);
+  }
 
   // Comandos disponibles en grupos
   if (messageText === '/dividir' || messageText === '/gastos' || messageText === '/split') {
@@ -839,7 +1155,7 @@ async function handleMessage(msg) {
     console.log(`[DEBUG] msg.vCards:`, msg.vCards);
     console.log(`[DEBUG] msg.hasMedia:`, msg.hasMedia);
   } else {
-    console.log(`📩 Mensaje de ${isGroup ? 'GRUPO' : 'usuario'} ${userPhone}: ${messageText}`);
+  console.log(`📩 Mensaje de ${isGroup ? 'GRUPO' : 'usuario'} ${userPhone}: ${messageText}`);
   }
 
   // FUNCIONALIDAD ESPECIAL PARA GRUPOS
@@ -1018,18 +1334,18 @@ async function handleMessage(msg) {
         }
         break;
       case '2':
-        response = await calendarModule.handleCalendarMessage(
-          msg,
-          userPhone,
-          userName,
-          '1',  // Esto simula que el usuario está entrando al menú de calendario
-          'main',  // Viene del módulo main
-          session,
-          db,
-          client
-        );
-        updateSession(userPhone, 'calendar');
-        break;
+  response = await calendarModule.handleCalendarMessage(
+    msg,
+    userPhone,
+    userName,
+    '1',  // Esto simula que el usuario está entrando al menú de calendario
+    'main',  // Viene del módulo main
+    session,
+    db,
+    client
+  );
+  updateSession(userPhone, 'calendar');
+  break;
       case '3':
         response = getExpensesMenu();
         updateSession(userPhone, 'expenses');
@@ -1189,7 +1505,7 @@ async function handleMessage(msg) {
         response = forecastCity.message;
         if (forecastCity.pendingLocation) {
           updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecastCity.pendingLocation }));
-        } else {
+    } else {
           updateSession(userPhone, 'weather');
         }
       } else {
@@ -1978,7 +2294,7 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
   console.log(`   Respuesta: ${response.substring(0, 100)}${response.length > 100 ? '...' : ''}\n`);
 
   try {
-    await msg.reply(response);
+  await msg.reply(response);
     console.log(`✅ Respuesta enviada exitosamente\n`);
   } catch (error) {
     console.error(`❌ ERROR al enviar respuesta:`, error);
@@ -2053,7 +2369,7 @@ async function sendFriendInviteMessage(client, inviterName, inviterPhone, friend
     const safeInviterName = inviterName || 'Un amigo';
     const safeFriendName = friendName && friendName.trim() ? friendName.trim() : 'amigo';
 
-    const message = `👋 ¡Hola *${safeFriendName}*!\n\n*${safeInviterName}* te invitó a usar *Milo*, tu asistente personal en WhatsApp.\n\nCon Milo podés:\n• 📅 Crear eventos y recordatorios\n• 💰 Dividir gastos con tus contactos\n• 🌤️ Consultar el pronóstico del tiempo\n• 🤖 Chatear con un asistente IA y mucho más\n\n📌 Guardame como *"Milo 💬"* y escribí *hola* o *menu* cuando quieras empezar.`;
+    const message = `👋 ¡Hola *${safeFriendName}*!\n\n*${safeInviterName}* te invitó a usar *Milo*, tu asistente personal en WhatsApp.\n\nCon Milo podés:\n• 📅 Crear eventos y recordatorios\n• 💰 Dividir gastos con tus contactos\n• 🌤️ Consultar el pronóstico del tiempo\n• 🏫 Te resumo todo lo que pasa en Classroom 😉\n• 🤖 Chatear con un asistente IA y mucho más\n\n📌 Guardame como *"Milo 💬"* y escribí *hola* o *menu* cuando quieras empezar.`;
 
     const targetId = numberId._serialized || chatId;
     await client.sendMessage(targetId, message);
@@ -2068,6 +2384,8 @@ async function sendFriendInviteMessage(client, inviterName, inviterPhone, friend
 // ============================================
 // INICIALIZAR CLIENTE DE WHATSAPP
 // ============================================
+
+let botWid = null;
 
 const client = new Client({
   authStrategy: new LocalAuth({
@@ -2096,6 +2414,7 @@ client.on('qr', (qr) => {
 
 // Evento: Conectado
 client.on('ready', () => {
+  botWid = client?.info?.wid?._serialized || null;
   console.log('\n✅ ¡BOT CONECTADO A WHATSAPP!\n');
   console.log('💬 El bot está listo para recibir mensajes\n');
   console.log('📋 Para probar, envía "hola" desde otro teléfono\n');
@@ -2105,7 +2424,39 @@ client.on('ready', () => {
 // Evento: Bot agregado a un grupo
 client.on('group_join', async (notification) => {
   try {
-    console.log('👥 Bot agregado a un grupo:', notification);
+    const recipientIds = notification?.recipientIds || [];
+    const chatId = notification?.chatId;
+
+    const botAdded = botWid && recipientIds.includes(botWid);
+
+    if (botAdded && chatId) {
+      const groupChat = await client.getChatById(chatId);
+      const groupName = groupChat?.name || 'este grupo';
+
+      const commandsHelp = '💰 *Comandos rápidos de gastos:*\n' +
+        '• `/gasto 5000 | Descripción | Nombre`\n' +
+        '• `/resumen`\n' +
+        '• `/calcular`\n\n';
+
+      const welcomeMessage = `👋 ¡Hola a todos!\n\nSoy *Milo*, su asistente personal en WhatsApp. Estoy acá para ayudar a organizar eventos, dividir gastos, consultar el clima y más.\n\n${commandsHelp}💡 Escriban *"hola"* o *"menu"* en un chat privado conmigo para empezar.\n\n¡Gracias por invitarme a *${groupName}*!`;
+      await client.sendMessage(chatId, welcomeMessage);
+
+      let inviterPhone = null;
+      let inviterName = 'Un integrante del grupo';
+      if (notification.author) {
+        inviterPhone = notification.author.replace('@c.us', '');
+        try {
+          const authorContact = await client.getContactById(notification.author);
+          inviterName = authorContact?.pushname || authorContact?.name || authorContact?.number || inviterName;
+        } catch (error) {
+          console.warn('[WARN] No se pudo obtener información del autor del grupo:', error.message);
+        }
+      }
+
+      if (groupChat?.participants?.length) {
+        await inviteMissingGroupMembers(groupChat.participants, inviterPhone, inviterName);
+      }
+    }
   } catch (error) {
     console.error('Error en group_join:', error);
   }
