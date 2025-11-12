@@ -11,6 +11,9 @@ const Database = require('better-sqlite3');
 const Anthropic = require('@anthropic-ai/sdk');
 const fs = require('fs');
 const calendarModule = require('./modules/calendar-module');  
+const classroomModule = require('./modules/classroom-module');
+const currencyModule = require('./modules/currency-module');
+const googleIntegration = require('./modules/calendar-module/google');
 // Crear carpeta data si no existe
 if (!fs.existsSync('./data')) {
   fs.mkdirSync('./data');
@@ -30,7 +33,15 @@ db.exec(`
     name TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_interaction DATETIME,
-    is_premium INTEGER DEFAULT 0
+    is_premium INTEGER DEFAULT 0,
+    location_city TEXT,
+    location_lat REAL,
+    location_lon REAL,
+    location_state TEXT,
+    location_country TEXT,
+    location_country_code TEXT,
+    home_currency TEXT,
+    home_country_code TEXT
   );
 
   CREATE TABLE IF NOT EXISTS calendar_events (
@@ -40,8 +51,19 @@ db.exec(`
     description TEXT,
     event_date DATETIME NOT NULL,
     reminder_sent INTEGER DEFAULT 0,
+    is_reminder INTEGER DEFAULT 0,
+    has_due_date INTEGER DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS event_invitees (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    phone TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (event_id) REFERENCES calendar_events(id) ON DELETE CASCADE
   );
 
   CREATE TABLE IF NOT EXISTS expense_groups (
@@ -88,7 +110,155 @@ db.exec(`
     status TEXT DEFAULT 'pending',
     FOREIGN KEY (user_phone) REFERENCES users(phone)
   );
+
+  CREATE TABLE IF NOT EXISTS google_auth_tokens (
+    user_phone TEXT PRIMARY KEY,
+    access_token TEXT,
+    refresh_token TEXT,
+    expiry_date INTEGER,
+    last_sync INTEGER,
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS classroom_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    account_email TEXT NOT NULL,
+    account_name TEXT,
+    access_token TEXT,
+    refresh_token TEXT,
+    expiry_date INTEGER,
+    last_sync INTEGER,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(user_phone, account_email),
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS classroom_courses (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    account_id INTEGER,
+    google_course_id TEXT NOT NULL,
+    name TEXT,
+    section TEXT,
+    description TEXT,
+    room TEXT,
+    state TEXT,
+    teacher_group TEXT,
+    enrollment_code TEXT,
+    course_json TEXT,
+    updated_at INTEGER,
+    UNIQUE(account_id, google_course_id),
+    FOREIGN KEY (account_id) REFERENCES classroom_accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS classroom_announcements (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    account_id INTEGER,
+    course_id INTEGER,
+    google_announcement_id TEXT NOT NULL,
+    text TEXT,
+    materials TEXT,
+    creation_time TEXT,
+    update_time TEXT,
+    creator_user_id TEXT,
+    state TEXT,
+    UNIQUE(account_id, google_announcement_id),
+    FOREIGN KEY (account_id) REFERENCES classroom_accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES classroom_courses(id),
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS classroom_coursework (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    account_id INTEGER,
+    course_id INTEGER,
+    google_coursework_id TEXT NOT NULL,
+    title TEXT,
+    description TEXT,
+    due_date TEXT,
+    due_time TEXT,
+    due_at TEXT,
+    state TEXT,
+    alternate_link TEXT,
+    max_points REAL,
+    work_type TEXT,
+    creation_time TEXT,
+    update_time TEXT,
+    UNIQUE(account_id, google_coursework_id),
+    FOREIGN KEY (account_id) REFERENCES classroom_accounts(id) ON DELETE CASCADE,
+    FOREIGN KEY (course_id) REFERENCES classroom_courses(id),
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS classroom_user_state (
+    user_phone TEXT PRIMARY KEY,
+    last_sync INTEGER,
+    last_summary_at INTEGER,
+    last_summary_hash TEXT,
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
 `);
+
+try {
+  calendarModule.database.ensureSchemaCompatibility(db);
+} catch (error) {
+  console.error('❌ No se pudo verificar el esquema del calendario al iniciar:', error.message);
+}
+
+try {
+  classroomModule.database.ensureSchema(db);
+} catch (error) {
+  console.error('❌ No se pudo verificar el esquema de Classroom al iniciar:', error.message);
+}
+
+// Migraciones: agregar columnas si no existen
+try {
+  db.exec('ALTER TABLE users ADD COLUMN location_city TEXT');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE users ADD COLUMN location_lat REAL');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE users ADD COLUMN location_lon REAL');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE calendar_events ADD COLUMN is_reminder INTEGER DEFAULT 0');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE google_auth_tokens ADD COLUMN last_sync INTEGER');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI) {
+  googleIntegration.syncAllUsers(db)
+    .then(({ processed, skipped }) => {
+      console.log(`☁️ Sincronización inicial de Google completada (procesados: ${processed}, omitidos: ${skipped}).`);
+    })
+    .catch((error) => {
+      console.error('❌ Error en sincronización inicial de Google:', error.message || error);
+    });
+
+  googleIntegration.startAutoSyncService(db);
+} else {
+  console.warn('⚠️ Sincronización automática de Google deshabilitada (faltan credenciales).');
+}
 
 console.log('✅ Base de datos inicializada');
 
@@ -96,9 +266,16 @@ console.log('✅ Base de datos inicializada');
 // CONFIGURACIÓN DE CLAUDE AI
 // ============================================
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY,
-});
+const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+let anthropic = null;
+
+if (anthropicApiKey) {
+  anthropic = new Anthropic({
+    apiKey: anthropicApiKey,
+  });
+} else {
+  console.warn('⚠️ Asistente IA (Claude) no configurado: falta ANTHROPIC_API_KEY.');
+}
 
 // ============================================
 // FUNCIONES DE BASE DE DATOS
@@ -296,6 +473,11 @@ function calculateSplit(groupId) {
 // ============================================
 
 async function processWithAI(userMessage, userPhone) {
+  if (!anthropic) {
+    console.warn('IA solicitada pero ANTHROPIC_API_KEY no está configurada.');
+    return '⚠️ El asistente de IA no está disponible en este momento porque falta la configuración necesaria.';
+  }
+
   try {
     const session = getSession(userPhone);
     const context = session?.context || '';
@@ -343,11 +525,12 @@ Sé breve y amigable.`
     const response = message.content[0].text;
 
     if (response.startsWith('CALENDAR:')) {
-      return '📅 Entendido. ¿Cuándo es el recordatorio? (Ej: "Mañana a las 3pm")';
+      return '📅 Entendido. ¿Cuándo es el recordatorio? (Ej: "Mañana a las 3pm")\n\n💡 Escribí *"menu"* para volver al inicio.';
     } else if (response.startsWith('EXPENSES:')) {
-      return '💰 ¿Quieres crear un nuevo grupo de gastos o agregar a uno existente?';
+      return '💰 ¿Quieres crear un nuevo grupo de gastos o agregar a uno existente?\n\n💡 Escribí *"menu"* para volver al inicio.';
     } else {
-      return response;
+      const trimmed = response.trim();
+      return `${trimmed}\n\n💡 Escribí *"menu"* para volver al inicio.`;
     }
   } catch (error) {
     console.error('Error con Claude:', error);
@@ -400,12 +583,14 @@ function markFeedbackAsRead(id) {
 
 function getMainMenu(userName = '') {
   const greeting = userName ? `Hola *${userName}*! 👋\n\n` : '';
-  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 📅 Calendario & Recordatorios\n2️⃣ 💰 Dividir Gastos\n3️⃣ 🤖 Asistente IA\n4️⃣ ⚙️ Configuración\n5️⃣ ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_`;
+  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 💰 Dividir Gastos\n4️⃣ 🏫 Google Classroom\n5️⃣ 🤖 Asistente IA\n6️⃣ 💱 Conversor de Monedas\n7️⃣ 🤝 Invitar a un amigo\n8️⃣ ⚙️ Configuración\n9️⃣ ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
 }
 
+calendarModule.setMainMenuProvider(getMainMenu);
+classroomModule.setMainMenuProvider(getMainMenu);
 
 function getExpensesMenu() {
-  return '💰 *Dividir Gastos*\n\n1. Crear nuevo grupo\n2. Agregar gasto\n3. Ver resumen\n4. Calcular división\n5. Volver al menú\n\n¿Qué deseas hacer?';
+  return '💰 *Dividir Gastos*\n\n1. Crear nuevo grupo\n2. Mis grupos activos\n3. Volver al menú\n\n¿Qué deseas hacer?\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.';
 }
 
 // ============================================
@@ -638,13 +823,24 @@ async function handleMessage(msg) {
   const isGroup = msg.from.includes('@g.us');
   const msgType = msg.type;
   
+  // Verificar si es un vCard (contacto compartido)
+  const isVCard = msgType === 'vcard' || (msg.vCards && msg.vCards.length > 0) || (msg.hasMedia && msg.type === 'vcard');
+  
   // Si el mensaje está vacío (imagen, audio, etc.), ignorar - EXCEPTO vcards (contactos)
-  if ((!messageText || messageText.trim() === '') && msgType !== 'vcard') {
+  if ((!messageText || messageText.trim() === '') && !isVCard) {
     console.log(`📩 Mensaje de ${userPhone}: [Multimedia - ignorado]`);
     return;
   }
   
-  console.log(`📩 Mensaje de ${isGroup ? 'GRUPO' : 'usuario'} ${userPhone}: ${messageText}`);
+  // Si es vCard, loguear información
+  if (isVCard) {
+    console.log(`📩 Mensaje de ${userPhone}: [Contacto compartido]`);
+    console.log(`[DEBUG] msgType: ${msgType}`);
+    console.log(`[DEBUG] msg.vCards:`, msg.vCards);
+    console.log(`[DEBUG] msg.hasMedia:`, msg.hasMedia);
+  } else {
+    console.log(`📩 Mensaje de ${isGroup ? 'GRUPO' : 'usuario'} ${userPhone}: ${messageText}`);
+  }
 
   // FUNCIONALIDAD ESPECIAL PARA GRUPOS
   if (isGroup) {
@@ -766,42 +962,196 @@ async function handleMessage(msg) {
     return;
   }
 
-  if (messageText.toLowerCase() === 'menu' || messageText === '4') {
+  // Interceptar "menu" para volver al menú principal desde cualquier módulo
+  if (messageText.toLowerCase() === 'menu' || messageText.toLowerCase() === 'menú' || messageText.toLowerCase() === 'volver') {
     response = getMainMenu(userName);
     updateSession(userPhone, 'main');
+    await msg.reply(response);
+    return;
   }
-  else if (currentModule === 'main') {
+
+  if (mensajeLower.startsWith('convert') || mensajeLower.startsWith('convers')) {
+    const currencyResult = await currencyModule.handleCurrencyMessage(
+      db,
+      userPhone,
+      userName,
+      messageText,
+      session
+    );
+    if (currencyResult.exit) {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    } else {
+      response = currencyResult.message || currencyModule.buildHelpMessage();
+      updateSession(userPhone, 'currency', currencyResult.context || null);
+    }
+    await msg.reply(response);
+    return;
+  }
+
+  if (mensajeLower === 'classroom' || mensajeLower === 'resumen classroom' || mensajeLower === 'resumen de classroom') {
+    response = await classroomModule.handleClassroomMessage(
+      msg,
+      userPhone,
+      userName,
+      messageText,
+      'main',
+      session,
+      db,
+      client
+    );
+    await msg.reply(response);
+    return;
+  }
+  
+  if (currentModule === 'main') {
     switch(messageText) {
       case '1':
-  response = await calendarModule.handleCalendarMessage(
-    msg,
-    userPhone,
-    userName,
-    '1',  // Esto simula que el usuario está entrando al menú de calendario
-    'main',  // Viene del módulo main
-    session,
-    db,
-    client
-  );
-  updateSession(userPhone, 'calendar');
-  break;
+        // Pronóstico del tiempo
+        const weatherModule = require('./modules/weather-module');
+        const forecastMain = await weatherModule.getWeatherForecast(db, userPhone, userName);
+        response = forecastMain.message;
+        if (forecastMain.pendingLocation) {
+          updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecastMain.pendingLocation }));
+        } else {
+          updateSession(userPhone, 'weather', null);
+        }
+        break;
       case '2':
+        response = await calendarModule.handleCalendarMessage(
+          msg,
+          userPhone,
+          userName,
+          '1',  // Esto simula que el usuario está entrando al menú de calendario
+          'main',  // Viene del módulo main
+          session,
+          db,
+          client
+        );
+        updateSession(userPhone, 'calendar');
+        break;
+      case '3':
         response = getExpensesMenu();
         updateSession(userPhone, 'expenses');
         break;
-      case '3':
+      case '4': {
+        response = await classroomModule.handleClassroomMessage(
+          msg,
+          userPhone,
+          userName,
+          messageText,
+          'main',
+          session,
+          db,
+          client
+        );
+        break;
+      }
+      case '5':
         response = `Hola *${userName}*! 🤖\n\nModo IA activado. Habla naturalmente y te ayudaré.\n\n_La sesión se cerrará automáticamente después de 5 minutos de inactividad._`;
         updateSession(userPhone, 'ai');
         break;
-      case '5':
+      case '6': {
+        const startCurrency = currencyModule.startCurrencyFlow(db, userPhone);
+        response = startCurrency.message;
+        updateSession(userPhone, 'currency', startCurrency.context);
+        break;
+      }
+      case '7':
+        response = '🤝 *Invitar a un amigo*\n\n¿Cómo querés compartir la invitación?\n\n1️⃣ Compartir contacto de WhatsApp\n2️⃣ Escribir número manualmente\n3️⃣ Cancelar\n\n💡 Podés escribir *"volver"* en cualquier momento para regresar al menú.';
+        updateSession(userPhone, 'invite_friend_method', JSON.stringify({ inviterName: userName, inviterPhone: userPhone }));
+        break;
+      case '8':
+        response = '⚙️ *Configuración general*\n\nPronto vas a poder administrar preferencias generales desde aquí.\nPor ahora, configura cada módulo desde sus propios menús.\n\nEscribe *menu* para volver al inicio.';
+        break;
+      case '9':
         response = 'ℹ️ *Ayuda*\n\nPuedes interactuar de dos formas:\n\n*📱 Por menús:* Navega con números\n*💬 Por voz:* Habla naturalmente\n\nEjemplos:\n- "Recuérdame mañana comprar pan"\n- "Crea un grupo para el asado"\n- "¿Cuánto debo?"\n\nEscribe *menu* para volver al inicio.\n\n*📝 Reportar problemas:*\n• */feedback* - Dejar comentario\n• */bug* - Reportar error\n• */sugerencia* - Nueva idea\n\n_⚠️ Importante: La sesión se cierra después de 5 min sin actividad._';
         break;
       default:
         response = getMainMenu(userName);
     }
   }
-  else if (currentModule === 'calendar' || currentModule.startsWith('calendar_')) {
-    response = await calendarModule.handleCalendarMessage(
+  else if (currentModule === 'weather') {
+    // Manejar configuración de ubicación o solicitudes de clima
+    const weatherModule = require('./modules/weather-module');
+    const weatherAPI = require('./modules/weather-module/weather-api');
+    
+    if (messageText.toLowerCase() === 'menu' || messageText.toLowerCase() === 'menú' || messageText === '0' || messageText.toLowerCase() === 'volver') {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    }
+    else if (messageText === '1' || messageText === '1️⃣' || messageText.toLowerCase() === 'automático' || messageText.toLowerCase() === 'automatico') {
+      try {
+        const forecastAuto = await weatherModule.getWeatherForecast(db, userPhone, userName, true);
+        response = forecastAuto.message;
+        if (!response) {
+          response = '⏳ Detectando tu ubicación... Por favor espera un momento.';
+        }
+        if (forecastAuto.pendingLocation) {
+          updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecastAuto.pendingLocation }));
+        } else {
+          updateSession(userPhone, 'weather', null);
+        }
+      } catch (error) {
+        console.error('[ERROR] Error en detección automática:', error);
+        console.error('[ERROR] Stack:', error.stack);
+        response = `❌ Error al detectar tu ubicación automáticamente.\n\n` +
+          `Error: ${error.message}\n\n` +
+          `Por favor intenta escribir el nombre de tu ciudad manualmente (opción 2).`;
+        updateSession(userPhone, 'weather', null);
+      }
+    }
+    // Opción 2: Escribir ciudad manualmente
+    else if (messageText === '2' || messageText === '2️⃣') {
+      response = '🌤️ *Escribir Ciudad*\n\nEscribe el nombre de tu ciudad:\n\n_Ejemplo: Mendoza, Buenos Aires, Córdoba, Rosario_';
+      updateSession(userPhone, 'weather_city');
+    }
+    else if (messageText === '3' || messageText === '3️⃣') {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    }
+    // Si el usuario escribe una ciudad (más de 2 caracteres)
+    else if (messageText && messageText.trim().length > 2) {
+      // Buscar coordenadas de la ciudad
+      const cityResult = await weatherAPI.getCityCoordinates(messageText.trim());
+      
+      if (cityResult.success) {
+        // Guardar ubicación
+        weatherModule.saveUserLocation(
+          db,
+          userPhone,
+          cityResult.data.name,
+          cityResult.data.lat,
+          cityResult.data.lon,
+          cityResult.data.state || null,
+          cityResult.data.country || null,
+          cityResult.data.countryCode || cityResult.data.country || null
+        );
+        
+        // Obtener pronóstico
+        const forecastManual = await weatherModule.getWeatherForecast(db, userPhone, userName);
+        response = forecastManual.message;
+        if (forecastManual.pendingLocation) {
+          updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecastManual.pendingLocation }));
+        } else {
+          updateSession(userPhone, 'weather', null);
+        }
+      } else {
+        response = `❌ No pude encontrar la ciudad "${messageText}".\n\n` +
+          `Intenta escribir el nombre completo de la ciudad:\n\n` +
+          `_Ejemplo: Mendoza, Buenos Aires, Córdoba, Rosario_\n\n` +
+          `O escribe *"menu"* para volver al inicio.`;
+        updateSession(userPhone, 'weather', null);
+      }
+    } else {
+      response = '❌ Por favor escribe el nombre de tu ciudad (mínimo 3 caracteres).\n\n' +
+        `_Ejemplo: Mendoza, Buenos Aires, Córdoba_\n\n` +
+        `O escribe *"menu"* para volver al inicio.`;
+      updateSession(userPhone, 'weather', null);
+    }
+  }
+  else if (currentModule === 'classroom' || currentModule.startsWith('classroom_')) {
+    response = await classroomModule.handleClassroomMessage(
       msg,
       userPhone,
       userName,
@@ -812,14 +1162,403 @@ async function handleMessage(msg) {
       client
     );
   }
+  else if (currentModule === 'weather_city') {
+    // Usuario está escribiendo el nombre de la ciudad
+    const weatherModule = require('./modules/weather-module');
+    const weatherAPI = require('./modules/weather-module/weather-api');
+
+    if (messageText.toLowerCase() === 'menu' || messageText.toLowerCase() === 'menú' || messageText === '0' || messageText.toLowerCase() === 'volver') {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    } else if (messageText && messageText.trim().length > 2) {
+      const cityResult = await weatherAPI.getCityCoordinates(messageText.trim());
+
+      if (cityResult.success) {
+        weatherModule.saveUserLocation(
+          db,
+          userPhone,
+          cityResult.data.name,
+          cityResult.data.lat,
+          cityResult.data.lon,
+          cityResult.data.state || null,
+          cityResult.data.country || null,
+          cityResult.data.countryCode || cityResult.data.country || null
+        );
+
+        const forecastCity = await weatherModule.getWeatherForecast(db, userPhone, userName);
+        response = forecastCity.message;
+        if (forecastCity.pendingLocation) {
+          updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecastCity.pendingLocation }));
+        } else {
+          updateSession(userPhone, 'weather');
+        }
+      } else {
+        response = `❌ No pude encontrar la ciudad "${messageText}".\n\n` +
+          `Intenta escribir el nombre completo de la ciudad:\n\n` +
+          `_Ejemplo: Mendoza, Buenos Aires, Córdoba, Rosario_\n\n` +
+          `O escribe *"menu"* para volver al inicio.`;
+        updateSession(userPhone, 'weather_city', JSON.stringify(session?.context || {}));
+      }
+    } else {
+      response = '❌ Por favor escribe el nombre de tu ciudad (mínimo 3 caracteres).\n\n' +
+        `_Ejemplo: Mendoza, Buenos Aires, Córdoba_`;
+    }
+  }
+  else if (currentModule === 'currency') {
+    const currencyResult = await currencyModule.handleCurrencyMessage(
+      db,
+      userPhone,
+      userName,
+      messageText,
+      session
+    );
+    if (currencyResult.exit) {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    } else {
+      response = currencyResult.message || currencyModule.buildHelpMessage();
+      updateSession(userPhone, 'currency', currencyResult.context || session?.context || null);
+    }
+  }
+  else if (currentModule === 'invite_friend_method') {
+    const normalized = messageText.trim().toLowerCase();
+    const contextPayload = JSON.stringify({ inviterName: userName, inviterPhone: userPhone });
+
+    if (['1', '1️⃣'].includes(normalized)) {
+      response = '📇 *Compartir contacto*\n\nToca el ícono de 📎 y elegí *Contacto* para enviarme el número de tu amigo.\n\nCuando estés listo, envía el contacto o escribe *"volver"* para cancelar.';
+      updateSession(userPhone, 'invite_friend_waiting_contact', contextPayload);
+    } else if (['2', '2️⃣'].includes(normalized)) {
+      response = '✍️ *Ingresar número manualmente*\n\nEscribe el número con código de país. Podés agregar el nombre separando con coma.\n\n_Ejemplos:_\n• 5492611234567\n• Ana,549113334455\n\nEscribe *"volver"* para cancelar.';
+      updateSession(userPhone, 'invite_friend_waiting_phone', contextPayload);
+    } else if (['3', '3️⃣', 'volver', 'menu', 'menú', 'cancelar'].includes(normalized)) {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    } else {
+      response = '❌ Opción no válida.\n\n1️⃣ Compartir contacto\n2️⃣ Escribir número manualmente\n3️⃣ Cancelar\n\nEscribe *"volver"* para regresar al menú.';
+    }
+  }
+  else if (currentModule === 'invite_friend_waiting_contact') {
+    const normalized = messageText.trim().toLowerCase();
+    const baseContext = session?.context ? JSON.parse(session.context) : {};
+    const inviterName = baseContext.inviterName || userName;
+    const inviterPhone = baseContext.inviterPhone || userPhone;
+
+    if (['volver', 'menu', 'menú', 'cancelar', '3', '3️⃣'].includes(normalized)) {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    } else if (['2', '2️⃣'].includes(normalized)) {
+      response = '✍️ *Ingresar número manualmente*\n\nEscribe el número con código de país. Podés agregar el nombre separando con coma.\n\n_Ejemplos:_\n• 5492611234567\n• Ana,549113334455\n\nEscribe *"volver"* para cancelar.';
+      updateSession(userPhone, 'invite_friend_waiting_phone', JSON.stringify(baseContext));
+    } else if (['1', '1️⃣'].includes(normalized)) {
+      response = '📇 *Compartir contacto*\n\nToca el ícono de 📎 y elegí *Contacto* para enviarme el número de tu amigo.\n\nCuando estés listo, envía el contacto o escribe *"volver"* para cancelar.';
+    } else if (isVCard) {
+      try {
+        const contactInfo = await extractContactFromSharedContact(msg);
+        if (!contactInfo || !contactInfo.phone) {
+          response = '❌ No pude leer el contacto. Compartilo nuevamente o prueba escribiendo el número manualmente.';
+        } else {
+          const inviteResult = await sendFriendInviteMessage(
+            client,
+            inviterName,
+            inviterPhone,
+            contactInfo.name,
+            contactInfo.phone
+          );
+
+          if (inviteResult.success) {
+            response = `✅ Invitación enviada a *${contactInfo.name}*.\n\n${getMainMenu(userName)}`;
+            updateSession(userPhone, 'main');
+          } else {
+            response = `❌ No pude enviar la invitación: ${inviteResult.error || 'Motivo desconocido'}.\n\nIntenta nuevamente o escribe el número manualmente.`;
+            updateSession(userPhone, 'invite_friend_waiting_contact', JSON.stringify(baseContext));
+          }
+        }
+      } catch (error) {
+        console.error('[ERROR] No se pudo procesar el contacto para invitación:', error);
+        response = '❌ Ocurrió un error al procesar el contacto. Intenta nuevamente o escribe el número manualmente.';
+        updateSession(userPhone, 'invite_friend_waiting_contact', JSON.stringify(baseContext));
+      }
+    } else {
+      response = '❌ Necesito que compartas un contacto usando el ícono de 📎.\n\nTambién podés escribir *"volver"* para cancelar o elegir la opción de ingresar el número manualmente.';
+    }
+  }
+  else if (currentModule === 'invite_friend_waiting_phone') {
+    const normalized = messageText.trim().toLowerCase();
+    const baseContext = session?.context ? JSON.parse(session.context) : {};
+    const inviterName = baseContext.inviterName || userName;
+    const inviterPhone = baseContext.inviterPhone || userPhone;
+
+    if (['volver', 'menu', 'menú', 'cancelar', '3', '3️⃣'].includes(normalized)) {
+      response = getMainMenu(userName);
+      updateSession(userPhone, 'main');
+    } else if (['1', '1️⃣'].includes(normalized)) {
+      response = '📇 *Compartir contacto*\n\nToca el ícono de 📎 y elegí *Contacto* para enviarme el número de tu amigo.\n\nCuando estés listo, envía el contacto o escribe *\"volver\"* para cancelar.';
+      updateSession(userPhone, 'invite_friend_waiting_contact', JSON.stringify(baseContext));
+    } else {
+      const parts = messageText.split(',');
+      let friendName = 'Tu amigo';
+      let phoneInput = messageText;
+
+      if (parts.length > 1) {
+        friendName = parts[0].trim() || 'Tu amigo';
+        phoneInput = parts.slice(1).join(',').trim();
+      }
+
+      const digits = phoneInput.replace(/\D/g, '');
+
+      if (!digits || digits.length < 8) {
+        response = '❌ El número parece inválido. Asegurate de incluir el código de país (ej: 5492611234567).\n\nPodés escribir *"volver"* para cancelar.';
+      } else {
+        const inviteResult = await sendFriendInviteMessage(
+          client,
+          inviterName,
+          inviterPhone,
+          friendName,
+          digits
+        );
+
+        if (inviteResult.success) {
+          response = `✅ Invitación enviada a *${friendName}*.\n\n${getMainMenu(userName)}`;
+          updateSession(userPhone, 'main');
+        } else {
+          response = `❌ No pude enviar la invitación: ${inviteResult.error || 'Motivo desconocido'}.\n\nVerificá el número e intenta nuevamente o escribe *"volver"* para cancelar.`;
+          updateSession(userPhone, 'invite_friend_waiting_phone', JSON.stringify(baseContext));
+        }
+      }
+    }
+  }
+  else if (currentModule === 'weather_save_location') {
+    const lowerMsg = messageText.trim().toLowerCase();
+    const weatherModule = require('./modules/weather-module');
+    const contextData = session?.context ? JSON.parse(session.context) : {};
+    const pendingLocation = contextData.pendingLocation || null;
+
+    if (['1', '1️⃣', 'sí', 'si', 'quiero', 'guardar'].includes(lowerMsg)) {
+      if (pendingLocation && (pendingLocation.city || pendingLocation.rawCity)) {
+        const cityToSave = pendingLocation.rawCity || pendingLocation.city;
+        weatherModule.saveUserLocation(
+          db,
+          userPhone,
+          cityToSave,
+          pendingLocation.lat,
+          pendingLocation.lon,
+          pendingLocation.state || null,
+          pendingLocation.country || null,
+          pendingLocation.countryCode || null
+        );
+
+        const updatedForecast = await weatherModule.getWeatherForecast(db, userPhone, userName);
+        const displayName = pendingLocation.city || cityToSave;
+        response = `✅ Ubicación guardada como *${displayName}*.\n\n${updatedForecast.message}`;
+      } else {
+        response = `❌ No encontré una ubicación para guardar.\n\nEscribe el nombre de tu ciudad o usa la detección automática nuevamente.`;
+      }
+      updateSession(userPhone, 'weather');
+    } else if (['2', '2️⃣', 'no', 'más tarde', 'después'].includes(lowerMsg)) {
+      const displayName = pendingLocation?.city || 'esta ubicación';
+      response = `👌 Perfecto, no guardaré la ubicación.\n\n${weatherModule.buildWeatherMenu(displayName)}`;
+      updateSession(userPhone, 'weather');
+    } else {
+      response = `❌ Opción no válida.\n\n1️⃣ Sí, guardala\n2️⃣ No, gracias`;
+    }
+  }
+  else if (currentModule === 'calendar' || currentModule.startsWith('calendar_')) {
+    // Manejar contactos compartidos (vcard) para invitados de eventos
+    const isVCard = msgType === 'vcard' || (msg.vCards && msg.vCards.length > 0) || (msg.hasMedia && msg.type === 'vcard');
+    
+    if (isVCard && (currentModule === 'calendar_waiting_contact' || currentModule === 'calendar_edit_invitees_waiting_contact')) {
+      console.log('[DEBUG] Procesando vCard para invitado de evento');
+      const context = JSON.parse(session.context || '{}');
+      // Manejar tanto calendar_waiting_contact como calendar_edit_invitees_waiting_contact
+      const eventId = context.eventId || (context.event ? context.event.id : null);
+      let invitees = context.invitees || [];
+      const isEditing = currentModule === 'calendar_edit_invitees_waiting_contact';
+      const eventForContext = context.event || null;
+      
+      if (isEditing && (!invitees || invitees.length === 0)) {
+        try {
+          const calendarDatabase = require('./modules/calendar-module/database');
+          invitees = calendarDatabase.getEventInvitees(db, eventId);
+        } catch (dbError) {
+          console.warn('[WARN] No se pudo sincronizar la lista de invitados desde la base de datos:', dbError);
+        }
+      }
+      
+      console.log('[DEBUG] Procesando contacto - Modo:', isEditing ? 'editar evento' : 'crear evento');
+      console.log('[DEBUG] Contexto recibido - eventId:', eventId, 'invitees actuales:', invitees.length);
+      
+      if (!eventId) {
+        console.error('[ERROR] No se encontró eventId en el contexto');
+        response = '❌ Error: No se encontró el evento. Por favor intenta nuevamente.';
+        await msg.reply(response);
+        return;
+      }
+      
+      try {
+        // Intentar obtener vCard de diferentes formas
+        let vcardData = null;
+        
+        if (msg.vCards && msg.vCards.length > 0) {
+          vcardData = Array.isArray(msg.vCards[0]) ? msg.vCards[0].join('\n') : msg.vCards[0];
+          console.log('[DEBUG] vCard encontrado en msg.vCards');
+        } else if (msg.body && msg.body.includes('BEGIN:VCARD')) {
+          vcardData = msg.body;
+          console.log('[DEBUG] vCard encontrado en msg.body');
+        } else if (msg.hasMedia) {
+          // Intentar obtener el vCard del media
+          try {
+            const media = await msg.downloadMedia();
+            if (media && media.data) {
+              vcardData = Buffer.from(media.data, 'base64').toString('utf-8');
+              console.log('[DEBUG] vCard encontrado en media descargado');
+            }
+          } catch (e) {
+            console.error('[ERROR] Error descargando media:', e);
+          }
+        }
+        
+        console.log('[DEBUG] vcardData encontrado:', vcardData ? 'Sí' : 'No');
+        if (vcardData) {
+          console.log('[DEBUG] vcardData (primeros 200 chars):', vcardData.substring(0, Math.min(200, vcardData.length)));
+        }
+        
+        if (vcardData) {
+          // Buscar nombre (FN: o N:)
+          const nameMatch = vcardData.match(/FN[^:]*:(.*)/i) || vcardData.match(/N[^:]*:([^;]+)/i);
+          // Buscar teléfono (TEL:) - buscar todas las ocurrencias
+          const telMatches = vcardData.match(/TEL[^:]*:([+\d\s\-\(\)]+)/gi);
+          let contactPhone = null;
+          
+          if (telMatches && telMatches.length > 0) {
+            // Tomar el primer teléfono encontrado
+            contactPhone = telMatches[0].replace(/TEL[^:]*:/i, '').replace(/\D/g, '');
+          }
+          
+          const contactName = nameMatch ? nameMatch[1].trim().replace(/;+/g, ' ').replace(/\s+/g, ' ') : 'Sin nombre';
+          
+          console.log('[DEBUG] Contacto extraído - Nombre:', contactName, 'Teléfono encontrado:', contactPhone ? 'Sí' : 'No');
+          if (contactPhone) {
+            console.log('[DEBUG] Teléfono original:', contactPhone);
+          }
+          
+          if (!contactPhone || contactPhone.length < 8) {
+            response = '❌ No se pudo extraer el teléfono del contacto o el teléfono es inválido.\n\nIntenta compartir el contacto nuevamente o escribe el nombre manualmente.';
+            await msg.reply(response);
+            return;
+          }
+          
+          // Limpiar y formatear teléfono
+          if (!contactPhone.startsWith('549')) {
+            contactPhone = '549' + contactPhone.replace(/^0+/, '');
+          }
+          
+          console.log('[DEBUG] Teléfono formateado:', contactPhone);
+          
+          // Verificar si el invitado ya existe
+          const existingInvitee = invitees.find(inv => inv.phone === contactPhone);
+          if (existingInvitee) {
+            if (isEditing) {
+              response = `⚠️ *${contactName}* ya está en la lista de invitados.\n\n¿Deseas agregar otro invitado?\n\n1️⃣ Sí, agregar otro\n2️⃣ No, volver`;
+              updateSession(userPhone, 'calendar_edit_invitees_post_add', JSON.stringify({ event: eventForContext || { id: eventId }, invitees }));
+            } else {
+              response = `⚠️ *${contactName}* ya está en la lista de invitados.\n\n¿Deseas agregar otro invitado?\n\n1️⃣ Sí, agregar otro\n2️⃣ No, listo\n3️⃣ Volver al menú`;
+              updateSession(userPhone, 'calendar_add_invitees_confirm', JSON.stringify({ eventId, invitees }));
+            }
+            await msg.reply(response);
+            return;
+          }
+          
+          // Agregar invitado
+          const calendarDatabase = require('./modules/calendar-module/database');
+          const calendarHandlers = require('./modules/calendar-module/handlers');
+          calendarDatabase.addEventInvitee(db, eventId, contactName, contactPhone);
+          invitees.push({ name: contactName, phone: contactPhone });
+          
+          if (isEditing) {
+            try {
+              invitees = calendarDatabase.getEventInvitees(db, eventId);
+            } catch (refreshError) {
+              console.warn('[WARN] No se pudo refrescar la lista de invitados recién agregados:', refreshError);
+            }
+          }
+          
+          console.log('[DEBUG] Invitado agregado. Total de invitados:', invitees.length);
+          
+          // Enviar mensaje de bienvenida al invitado
+          const sendResult = await calendarHandlers.sendInviteeWelcomeMessage(
+            client,
+            db,
+            eventId,
+            contactPhone,
+            contactName,
+            userPhone,
+            userName
+          );
+          
+          if (isEditing) {
+            response = `✅ *${contactName}* agregado correctamente!\n\n📊 Total de invitados: ${invitees.length}\n\n¿Deseas agregar otro invitado?\n\n1️⃣ Sí, agregar otro\n2️⃣ No, volver`;
+          } else {
+            response = `✅ *${contactName}* agregado correctamente!\n\n📊 Total de invitados: ${invitees.length}\n\n¿Deseas agregar otro invitado?\n\n1️⃣ Sí, agregar otro\n2️⃣ No, listo\n3️⃣ Volver al menú`;
+          }
+
+          if (!sendResult || !sendResult.success) {
+            const errorMsg = sendResult?.error || 'No se pudo notificar automáticamente al invitado.';
+            console.warn(`[WARN] No se pudo enviar mensaje de bienvenida a ${contactName}: ${errorMsg}`);
+            response += `\n\n⚠️ *Aviso:* No pude notificar automáticamente a ${contactName}. Podés avisarle manualmente.\nMotivo: ${errorMsg}`;
+          }
+          
+          // Actualizar sesión con los invitados actualizados
+          if (isEditing) {
+            updateSession(userPhone, 'calendar_edit_invitees_post_add', JSON.stringify({ event: eventForContext || { id: eventId }, invitees }));
+          } else {
+            updateSession(userPhone, 'calendar_add_invitees_confirm', JSON.stringify({ eventId, invitees }));
+          }
+          await msg.reply(response);
+          return;
+        } else {
+          response = '❌ No se pudo leer el contacto. Intenta compartirlo nuevamente.\n\n💡 Asegúrate de compartir el contacto desde la lista de contactos de WhatsApp.';
+          await msg.reply(response);
+          return;
+        }
+      } catch (error) {
+        console.error('[ERROR] Error procesando contacto:', error);
+        console.error('[ERROR] Stack:', error.stack);
+        response = '❌ Error al procesar el contacto. Por favor intenta de nuevo.\n\nSi el problema persiste, intenta agregar el invitado escribiendo el nombre manualmente.';
+        await msg.reply(response);
+        return;
+      }
+    } else {
+      response = await calendarModule.handleCalendarMessage(
+        msg,
+        userPhone,
+        userName,
+        messageText,
+        currentModule,
+        session,
+        db,
+        client
+      );
+    }
+  }
   else if (currentModule === 'expenses') {
     switch(messageText) {
       case '1':
         response = '💰 Escribe el nombre del grupo (ej: "Asado del sábado")';
         updateSession(userPhone, 'expenses_create');
         break;
-      case '5':
-        response = getMainMenu();
+      case '2': {
+        const groups = getUserExpenseGroups(userPhone);
+        if (!groups || groups.length === 0) {
+          response = '❌ No tenés grupos activos todavía.\n\nSelecciona *1* para crear un nuevo grupo.';
+        } else {
+          const list = groups.map((g, i) => `${i + 1}. ${g.name} • ${g.participant_count} participante(s)`).join('\n');
+          response = `📊 *Tus grupos activos*\n\n${list}\n\nEscribe el número del grupo que querés administrar o *"menu"* para volver.`;
+          updateSession(userPhone, 'expenses_select_group', JSON.stringify({ groups }));
+        }
+        break;
+      }
+      case '3':
+        response = getMainMenu(userName);
         updateSession(userPhone, 'main');
         break;
       default:
@@ -829,30 +1568,30 @@ async function handleMessage(msg) {
   else if (currentModule === 'expenses_create') {
     const result = createExpenseGroup(messageText, userPhone);
     response = `✅ Grupo "${messageText}" creado (ID: ${result.groupId}).\n\n👥 *Agregar participantes:*\n\n¿Cómo quieres agregarlos?\n\n*1* - Uno por uno (te pregunto nombre y teléfono)\n*2* - Compartir contacto 📱\n*3* - Agregar yo mismo (formato: Nombre,Teléfono)\n*4* - Listo, no agregar más`;
-    updateSession(userPhone, 'expenses_add_method', JSON.stringify({ groupId: result.groupId, participants: [] }));
+    updateSession(userPhone, 'expenses_add_method', JSON.stringify({ groupId: result.groupId, groupName: messageText, participants: [] }));
   }
   else if (currentModule === 'expenses_add_method') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     
     if (messageText === '1') {
       response = '👤 Perfecto!\n\nEscribe el *nombre* del primer participante:\n\n_Ejemplo: Juan_';
-      updateSession(userPhone, 'expenses_add_name', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_add_name', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '2') {
       response = '📱 *Compartir contacto*\n\nToca el ícono de 📎 (adjuntar)\nSelecciona *"Contacto"*\nElige el contacto a agregar\n\n_También puedes escribir *"3"* para usar el formato manual_';
-      updateSession(userPhone, 'expenses_waiting_contact', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_waiting_contact', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '3') {
       response = '📝 *Agregar participantes*\n\nEnvía en formato: *Nombre,Teléfono*\n\n*Ejemplos:*\n• Juan,5492614567890\n• María,5492615123456\n\nCuando termines, escribe *"listo"*';
-      updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '4') {
       if (participants.length === 0) {
         response = '❌ Debes agregar al menos un participante.\n\n*1* - Agregar uno por uno\n*2* - Compartir contacto\n*3* - Agregar con formato\n*4* - Listo';
       } else {
-        response = `✅ Perfecto *${userName}*!\n\nGrupo configurado con ${participants.length} participante(s):\n\n` +
-          participants.map((p, i) => `${i+1}. ${p.name}`).join('\n') +
-          '\n\n💰 *Ahora puedes:*\n\n1. Agregar gastos\n2. Ver resumen\n3. Calcular división\n4. Volver al menú\n\n¿Qué deseas hacer?';
-        updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId }));
+        const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
+        response = `✅ Perfecto *${userName}*!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName)}`;
+        updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
       }
     } else {
       response = '❌ Opción no válida.\n\n*1* - Uno por uno\n*2* - Compartir contacto\n*3* - Formato Nombre,Teléfono\n*4* - Listo';
@@ -861,6 +1600,7 @@ async function handleMessage(msg) {
   else if (currentModule === 'expenses_waiting_contact') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     
     // Verificar si es un contacto compartido
@@ -896,7 +1636,7 @@ async function handleMessage(msg) {
               `*2* - Agregar manualmente\n` +
               `*3* - Terminar y continuar`;
             
-            updateSession(userPhone, 'expenses_after_contact', JSON.stringify({ groupId, participants }));
+            updateSession(userPhone, 'expenses_after_contact', JSON.stringify({ groupId, groupName, participants }));
           }
         } else {
           response = '❌ No se pudo leer el contacto compartido.\n\nIntenta de nuevo o usa la opción *3* para agregar manualmente.';
@@ -909,7 +1649,7 @@ async function handleMessage(msg) {
       // Si escribió texto en lugar de compartir contacto
       if (messageText === '3') {
         response = '📝 *Agregar participantes manualmente*\n\nEnvía en formato: *Nombre,Teléfono*\n\n*Ejemplos:*\n• Juan,5492614567890\n• María,2615123456\n\nCuando termines, escribe *"listo"*';
-        updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, participants }));
+        updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, groupName, participants }));
       } else {
         response = '❌ Por favor, comparte un contacto usando el ícono 📎\n\nO escribe *"3"* para usar el formato manual (Nombre,Teléfono)';
       }
@@ -918,19 +1658,19 @@ async function handleMessage(msg) {
   else if (currentModule === 'expenses_after_contact') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     
     if (messageText === '1') {
       response = '📱 *Compartir otro contacto*\n\nToca el ícono de 📎 (adjuntar)\nSelecciona *"Contacto"*\nElige el contacto a agregar';
-      updateSession(userPhone, 'expenses_waiting_contact', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_waiting_contact', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '2') {
       response = '📝 *Agregar manualmente*\n\nEnvía en formato: *Nombre,Teléfono*\n\n*Ejemplo:*\nJuan,5492614567890';
-      updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '3') {
-      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n` +
-        participants.map((p, i) => `${i+1}. ${p.name}`).join('\n') +
-        '\n\n💰 *Ahora puedes:*\n\n1. Agregar gastos\n2. Ver resumen\n3. Calcular división\n4. Volver al menú\n\n¿Qué deseas hacer?';
-      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId }));
+      const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
+      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName)}`;
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       response = '❌ Opción no válida.\n\n*1* - Compartir otro contacto\n*2* - Agregar manualmente\n*3* - Terminar';
     }
@@ -938,15 +1678,17 @@ async function handleMessage(msg) {
   else if (currentModule === 'expenses_add_name') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     
     // Guardar el nombre temporalmente
     response = `👤 *${messageText}*\n\nAhora escribe el *número de teléfono*:\n\n_Ejemplo: 2615176403_\n\n_Sin espacios, sin guiones, solo números_`;
-    updateSession(userPhone, 'expenses_add_phone', JSON.stringify({ groupId, participants, tempName: messageText }));
+    updateSession(userPhone, 'expenses_add_phone', JSON.stringify({ groupId, groupName, participants, tempName: messageText }));
   }
   else if (currentModule === 'expenses_add_phone') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     const name = context.tempName;
     
@@ -967,40 +1709,43 @@ async function handleMessage(msg) {
         `¿Qué deseas hacer?\n\n` +
         `*1* - Agregar otro participante\n` +
         `*2* - Terminar y continuar`;
-      updateSession(userPhone, 'expenses_after_add', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_after_add', JSON.stringify({ groupId, groupName, participants }));
     }
   }
   else if (currentModule === 'expenses_after_add') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     
     if (messageText === '1') {
       response = '👤 Escribe el *nombre* del siguiente participante:';
-      updateSession(userPhone, 'expenses_add_name', JSON.stringify({ groupId, participants }));
+      updateSession(userPhone, 'expenses_add_name', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '2') {
-      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n` +
-        participants.map((p, i) => `${i+1}. ${p.name}`).join('\n') +
-        '\n\n💰 *Ahora puedes:*\n\n1. Agregar gastos\n2. Ver resumen\n3. Calcular división\n4. Volver al menú\n\n¿Qué deseas hacer?';
-      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId }));
+      const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
+      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName)}`;
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
-      response = '❌ Opción no válida.\n\n*1* - Agregar otro\n*2* - Terminar';
+      response = '❌ Opción no válida.\n\n*1* - Agregar otro participante\n*2* - Terminar';
     }
   }
   else if (currentModule === 'expenses_add_participants') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     const participants = context.participants || [];
     
     if (messageText.toLowerCase() === 'listo') {
       if (participants.length === 0) {
-        response = '❌ Debes agregar al menos un participante.\n\nEnvía: Nombre,Teléfono';
+        response = '❌ Necesitas agregar al menos un participante.\n\nEnvía *Nombre,Teléfono* o escribe *"cancelar"* para volver.';
       } else {
-        response = `✅ Perfecto *${userName}*!\n\nGrupo configurado con ${participants.length} participante(s):\n\n` +
-          participants.map((p, i) => `${i+1}. ${p.name}`).join('\n') +
-          '\n\n💰 *Ahora puedes:*\n\n1. Agregar gastos\n2. Ver resumen\n3. Calcular división\n4. Volver al menú\n\n¿Qué deseas hacer?';
-        updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId }));
+        const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
+        response = `✅ Participantes agregados:\n\n${listado}\n\n${buildExpensesManageMenu(groupName)}`;
+        updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
       }
+    } else if (messageText.toLowerCase() === 'cancelar') {
+      response = getExpensesMenu();
+      updateSession(userPhone, 'expenses');
     } else {
       // Parsear participante: Nombre,Teléfono
       const parts = messageText.split(',').map(p => p.trim());
@@ -1013,7 +1758,7 @@ async function handleMessage(msg) {
           addParticipant(groupId, fullPhone, name);
           participants.push({ name, phone: fullPhone });
           response = `✅ *${name}* agregado (${participants.length} participante(s))\n\nAgrega otro o escribe *"listo"* para continuar.`;
-          updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, participants }));
+          updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, groupName, participants }));
         } else {
           response = '❌ Teléfono inválido. Debe tener 10-15 dígitos.\n\nEjemplo: María,5492615123456';
         }
@@ -1025,13 +1770,14 @@ async function handleMessage(msg) {
   else if (currentModule === 'expenses_manage') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     
     switch(messageText) {
       case '1':
         response = '💵 *Agregar gasto*\n\nEnvía en este formato:\nMonto | Descripción | Quién pagó\n\n*Ejemplo:*\n5000 | Carne | Juan\n\n_El monto debe ser solo números (sin $ ni puntos)_';
-        updateSession(userPhone, 'expenses_add_expense', JSON.stringify({ groupId }));
+        updateSession(userPhone, 'expenses_add_expense', JSON.stringify({ groupId, groupName }));
         break;
-      case '2':
+      case '2': {
         const summary = getExpenseSummary(groupId);
         if (summary.expenses.length === 0) {
           response = '📋 No hay gastos registrados todavía.\n\nSelecciona *1* para agregar el primer gasto.';
@@ -1044,10 +1790,11 @@ async function handleMessage(msg) {
             summary.expenses.map((e, i) => 
               `${i+1}. ${e.amount} - ${e.description}\n   💳 Pagó: ${e.payer_name || 'N/A'}`
             ).join('\n\n') +
-            '\n\n¿Qué deseas hacer?\n1. Agregar gasto\n2. Ver resumen\n3. Calcular división\n4. Volver al menú';
+            `\n\n${buildExpensesManageMenu(groupName)}`;
         }
         break;
-      case '3':
+      }
+      case '3': {
         const split = calculateSplit(groupId);
         if (split.transactions.length === 0) {
           response = '✅ *¡Todo pagado!*\n\nNo hay deudas pendientes. Todos están al día.';
@@ -1061,18 +1808,37 @@ async function handleMessage(msg) {
             ).join('\n\n') +
             '\n\n_Estas transferencias minimizan la cantidad de pagos necesarios._';
         }
+        response += `\n\n${buildExpensesManageMenu(groupName)}`;
         break;
-      case '4':
-        response = getMainMenu(userName);
-        updateSession(userPhone, 'main');
+      }
+      case '4': {
+        const participants = getGroupParticipants(groupId);
+        if (participants.length === 0) {
+          response = '❌ El grupo no tiene participantes cargados.';
+          response += `\n\n${buildExpensesManageMenu(groupName)}`;
+        } else {
+          const list = participants.map((p, i) => `${i + 1}. ${p.name} (${p.phone})`).join('\n');
+          response = `👥 *Participantes del grupo*\n\n${list}\n\nEscribe el número del participante que querés quitar o *0* para cancelar.`;
+          updateSession(userPhone, 'expenses_manage_participants', JSON.stringify({ groupId, groupName, participants }));
+        }
+        break;
+      }
+      case '5':
+        response = `⚠️ *Eliminar grupo*\n\n¿Seguro que querés eliminar "${groupName}"? Esta acción no se puede deshacer.\n\n1️⃣ Sí, eliminar\n2️⃣ No, volver`;
+        updateSession(userPhone, 'expenses_delete_confirm', JSON.stringify({ groupId, groupName }));
+        break;
+      case '6':
+        response = getExpensesMenu();
+        updateSession(userPhone, 'expenses');
         break;
       default:
-        response = '❌ Opción inválida.\n\n1. Agregar gasto\n2. Ver resumen\n3. Calcular división\n4. Volver al menú';
+        response = buildExpensesManageMenu(groupName);
     }
   }
   else if (currentModule === 'expenses_add_expense') {
     const context = JSON.parse(session.context);
     const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
     
     // Parsear: Monto | Descripción | Quién pagó
     const parts = messageText.split('|').map(p => p.trim());
@@ -1101,8 +1867,8 @@ async function handleMessage(msg) {
         }
       }
     } else if (messageText.toLowerCase() === 'ver') {
-      response = '📋 Volviendo al resumen...\n\n1. Agregar gasto\n2. Ver resumen\n3. Calcular división\n4. Volver al menú';
-      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId }));
+      response = `${buildExpensesManageMenu(groupName)}`;
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       response = '❌ Formato incorrecto.\n\nUsa: *Monto | Descripción | Quién pagó*\n\nEjemplo:\n3500 | Bebidas | María';
     }
@@ -1110,9 +1876,193 @@ async function handleMessage(msg) {
   else if (currentModule === 'ai') {
     response = await processWithAI(messageText, userPhone);
   }
+  else if (currentModule === 'expenses_select_group') {
+    const context = JSON.parse(session.context || '{}');
+    const groups = context.groups || [];
 
-  await msg.reply(response);
-  console.log(`✅ Respuesta enviada: ${response.substring(0, 50)}...`);
+    if (['menu', 'menú', 'volver'].includes(messageText.toLowerCase())) {
+      response = getExpensesMenu();
+      updateSession(userPhone, 'expenses');
+    } else {
+      const index = parseInt(messageText, 10) - 1;
+      if (Number.isNaN(index) || index < 0 || index >= groups.length) {
+        response = '❌ Opción inválida. Escribe el número del grupo que querés administrar o *"menu"* para volver.';
+      } else {
+        const selected = groups[index];
+        const groupName = getExpenseGroupName(selected.id);
+        response = buildExpensesManageMenu(groupName);
+        updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId: selected.id, groupName }));
+      }
+    }
+  }
+  else if (currentModule === 'expenses_manage_participants') {
+    const context = JSON.parse(session.context || '{}');
+    const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
+    const participants = context.participants || [];
+    
+    if (['0', 'menu', 'menú', 'volver'].includes(messageText.toLowerCase())) {
+      response = buildExpensesManageMenu(groupName);
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
+    } else {
+      const index = parseInt(messageText, 10) - 1;
+      if (Number.isNaN(index) || index < 0 || index >= participants.length) {
+        response = '❌ Opción inválida. Escribe el número del participante que querés quitar o *0* para cancelar.';
+      } else {
+        const participant = participants[index];
+        const removal = removeGroupParticipant(groupId, participant.id);
+        if (!removal.success) {
+          response = `❌ ${removal.message}`;
+          response += `\n\n${buildExpensesManageMenu(groupName)}`;
+          updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
+        } else {
+          const updatedParticipants = getGroupParticipants(groupId);
+          if (updatedParticipants.length === 0) {
+            response = '✅ Participante eliminado. El grupo quedó sin participantes.';
+            response += `\n\n${buildExpensesManageMenu(groupName)}`;
+            updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
+          } else {
+            const list = updatedParticipants.map((p, i) => `${i + 1}. ${p.name} (${p.phone})`).join('\n');
+            response = `✅ Participante eliminado.
+
+👥 *Participantes restantes:*
+
+${list}
+
+Escribe otro número para quitar otro participante o *0* para volver.`;
+            updateSession(userPhone, 'expenses_manage_participants', JSON.stringify({ groupId, groupName, participants: updatedParticipants }));
+          }
+        }
+      }
+    }
+  }
+  else if (currentModule === 'expenses_delete_confirm') {
+    const context = JSON.parse(session.context || '{}');
+    const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
+    
+    if (messageText === '1') {
+      const result = deleteExpenseGroup(groupId, userPhone);
+      if (result.success) {
+        response = `🗑️ *Grupo eliminado*\n\n"${groupName}" fue eliminado correctamente.`;
+      } else {
+        response = `❌ ${result.message}`;
+      }
+      response += `\n\n${getExpensesMenu()}`;
+      updateSession(userPhone, 'expenses');
+    } else if (messageText === '2' || ['menu', 'menú', 'volver'].includes(messageText.toLowerCase())) {
+      response = buildExpensesManageMenu(groupName);
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
+    } else {
+      response = '❌ Opción inválida. Responde con 1 para eliminar el grupo o 2 para cancelar.';
+    }
+  }
+
+  // Validar respuesta antes de enviar
+  if (!response || response.trim() === '') {
+    console.error(`❌ ERROR: Respuesta vacía para módulo: ${currentModule}, mensaje: ${messageText}`);
+    console.error(`❌ Stack trace:`, new Error().stack);
+    response = '❌ No se pudo procesar tu solicitud. Por favor intenta de nuevo o escribe *"menu"* para volver al inicio.';
+  }
+
+  // Verificar que response sea string
+  if (typeof response !== 'string') {
+    console.error(`❌ ERROR: Respuesta no es string, tipo: ${typeof response}`);
+    response = String(response) || '❌ Error al procesar la respuesta.';
+  }
+
+  // Log antes de enviar
+  console.log(`\n📤 Enviando respuesta (${response.length} caracteres):`);
+  console.log(`   Módulo: ${currentModule}`);
+  console.log(`   Mensaje recibido: ${messageText.substring(0, 50)}${messageText.length > 50 ? '...' : ''}`);
+  console.log(`   Respuesta: ${response.substring(0, 100)}${response.length > 100 ? '...' : ''}\n`);
+
+  try {
+    await msg.reply(response);
+    console.log(`✅ Respuesta enviada exitosamente\n`);
+  } catch (error) {
+    console.error(`❌ ERROR al enviar respuesta:`, error);
+    console.error(`❌ Error details:`, {
+      message: error.message,
+      stack: error.stack
+    });
+  }
+}
+
+async function extractContactFromSharedContact(msg) {
+  let vcardData = null;
+
+  if (msg.vCards && msg.vCards.length > 0) {
+    vcardData = Array.isArray(msg.vCards[0]) ? msg.vCards[0].join('\n') : msg.vCards[0];
+  } else if (msg.body && msg.body.includes('BEGIN:VCARD')) {
+    vcardData = msg.body;
+  } else if (msg.hasMedia) {
+    try {
+      const media = await msg.downloadMedia();
+      if (media && media.data) {
+        vcardData = Buffer.from(media.data, 'base64').toString('utf-8');
+      }
+    } catch (error) {
+      console.error('[ERROR] extractContactFromSharedContact - descarga fallida:', error.message);
+    }
+  }
+
+  if (!vcardData) {
+    return null;
+  }
+
+  const nameMatch = vcardData.match(/FN[^:]*:(.*)/i) || vcardData.match(/N[^:]*:([^;]+)/i);
+  const telMatches = vcardData.match(/TEL[^:]*:([+\d\s\-\(\)]+)/gi);
+  let contactPhone = null;
+
+  if (telMatches && telMatches.length > 0) {
+    contactPhone = telMatches[0].replace(/TEL[^:]*:/i, '').replace(/\D/g, '');
+  }
+
+  const contactName = nameMatch ? nameMatch[1].trim().replace(/;+/g, ' ').replace(/\s+/g, ' ') : 'Tu amigo';
+
+  return {
+    name: contactName || 'Tu amigo',
+    phone: contactPhone
+  };
+}
+
+async function sendFriendInviteMessage(client, inviterName, inviterPhone, friendName, friendPhone) {
+  if (!client || !friendPhone) {
+    return { success: false, error: 'Teléfono del invitado no disponible' };
+  }
+
+  const digitsFriend = friendPhone.replace(/\D/g, '');
+  if (!digitsFriend || digitsFriend.length < 8) {
+    return { success: false, error: 'Número inválido' };
+  }
+
+  const digitsInviter = (inviterPhone || '').replace(/\D/g, '');
+  if (digitsInviter && digitsInviter === digitsFriend) {
+    return { success: false, error: 'No podés invitarte a vos mismo 😉' };
+  }
+
+  try {
+    const chatId = `${digitsFriend}@c.us`;
+    const numberId = await client.getNumberId(chatId);
+
+    if (!numberId) {
+      return { success: false, error: 'El número no está registrado en WhatsApp' };
+    }
+
+    const safeInviterName = inviterName || 'Un amigo';
+    const safeFriendName = friendName && friendName.trim() ? friendName.trim() : 'amigo';
+
+    const message = `👋 ¡Hola *${safeFriendName}*!\n\n*${safeInviterName}* te invitó a usar *Milo*, tu asistente personal en WhatsApp.\n\nCon Milo podés:\n• 📅 Crear eventos y recordatorios\n• 💰 Dividir gastos con tus contactos\n• 🌤️ Consultar el pronóstico del tiempo\n• 🤖 Chatear con un asistente IA y mucho más\n\n📌 Guardame como *"Milo 💬"* y escribí *hola* o *menu* cuando quieras empezar.`;
+
+    const targetId = numberId._serialized || chatId;
+    await client.sendMessage(targetId, message);
+    console.log(`✅ Invitación enviada a ${safeFriendName} (${digitsFriend}) por ${safeInviterName} (${digitsInviter})`);
+    return { success: true };
+  } catch (error) {
+    console.error('[ERROR] No se pudo enviar invitación:', error);
+    return { success: false, error: error.message || 'Error enviando la invitación' };
+  }
 }
 
 // ============================================
@@ -1216,4 +2166,81 @@ console.log('🔔 Servicio de notificaciones de calendario iniciado');
 // Iniciar el cliente de WhatsApp
 console.log('🚀 Iniciando bot...');
 client.initialize();
+
+function getUserExpenseGroups(userPhone) {
+  return db.prepare(`
+    SELECT g.id, g.name, g.created_at,
+      (SELECT COUNT(*) FROM group_participants gp WHERE gp.group_id = g.id) AS participant_count
+    FROM expense_groups g
+    LEFT JOIN group_participants gp2 ON g.id = gp2.group_id
+    WHERE g.creator_phone = ? OR gp2.phone = ?
+    GROUP BY g.id
+    HAVING IFNULL(g.is_closed, 0) = 0
+    ORDER BY g.created_at DESC
+  `).all(userPhone, userPhone);
+}
+
+function getGroupParticipants(groupId) {
+  return db.prepare(`
+    SELECT id, name, phone
+    FROM group_participants
+    WHERE group_id = ?
+    ORDER BY id
+  `).all(groupId);
+}
+
+function deleteExpenseGroup(groupId, userPhone) {
+  const group = db.prepare(`
+    SELECT id, name, creator_phone
+    FROM expense_groups
+    WHERE id = ?
+  `).get(groupId);
+
+  if (!group) {
+    return { success: false, message: 'Grupo no encontrado.' };
+  }
+
+  if (group.creator_phone !== userPhone) {
+    return { success: false, message: 'Solo el creador puede eliminar el grupo.' };
+  }
+
+  db.prepare('DELETE FROM expenses WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM group_participants WHERE group_id = ?').run(groupId);
+  db.prepare('DELETE FROM expense_groups WHERE id = ?').run(groupId);
+
+  return { success: true, name: group.name };
+}
+
+function removeGroupParticipant(groupId, participantId) {
+  const participant = db.prepare(`
+    SELECT id, name, phone
+    FROM group_participants
+    WHERE id = ? AND group_id = ?
+  `).get(participantId, groupId);
+
+  if (!participant) {
+    return { success: false, message: 'Participante no encontrado.' };
+  }
+
+  db.prepare('DELETE FROM expenses WHERE group_id = ? AND payer_phone = ?').run(groupId, participant.phone);
+  db.prepare('DELETE FROM group_participants WHERE id = ?').run(participantId);
+
+  return { success: true, participant };
+}
+
+function buildExpensesManageMenu(groupName = '') {
+  const header = groupName ? `💰 *${groupName}*` : '💰 *Dividir Gastos*';
+  return `${header}\n\n1. Agregar gasto\n2. Ver resumen\n3. Calcular división\n4. Ver/Quitar participantes\n5. Eliminar grupo\n6. Volver al menú de gastos\n\n💡 Escribí *"menu"* para volver al inicio.`;
+}
+
+function getExpenseGroupName(groupId) {
+  const row = db.prepare(`
+    SELECT name FROM expense_groups WHERE id = ?
+  `).get(groupId);
+  return row ? row.name : 'Grupo de gastos';
+}
+
+module.exports = {
+  getMainMenu
+};
 

@@ -36,6 +36,20 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, pronóstico del t
 - ✅ Funciona en grupos de WhatsApp
 - ✅ Resumen de gastos
 
+### 🏫 Módulo Google Classroom
+- ✅ Conectar tu cuenta de Google (Calendar + Classroom) con OAuth
+- ✅ Sincronizar cursos activos y guardar anuncios/tareas recientes
+- ✅ Resumen automático agrupado por curso/personal docente
+- ✅ Identificar próximas entregas y tareas atrasadas
+- ✅ Sincronización manual bajo demanda desde el bot
+- ✅ Soporta múltiples cuentas (perfecto para hij@s en distintas aulas)
+
+### 💱 Conversor de Monedas
+- ✅ Consultar tasas de cambio al instante (usa `exchangerate.host`)
+- ✅ Conversaciones naturales: `convertir 100 usd a ars`
+- ✅ Disponible como opción de menú y comando rápido
+- ✅ Ideal para viajes con varias monedas
+
 ### 🤖 Asistente IA
 - ✅ Integración con Claude (Anthropic)
 - ✅ Procesamiento de lenguaje natural
@@ -51,6 +65,7 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, pronóstico del t
 Consulta el [ROADMAP.md](ROADMAP.md) para ver el plan completo. Algunas funcionalidades en desarrollo:
 
 - 📱 **Programar mensajes de WhatsApp** - Enviar mensajes a contactos en fecha/hora específica
+- 🏫 **Resumen inteligente de Google Classroom** - Conectar tu cuenta y recibir resúmenes de anuncios y tareas
 - 🍎 **Contador de calorías por IA** - Analizar fotos de comida para contar calorías
 - 🏪 **Marketplace de módulos** - Instalar módulos opcionales según necesidades
 - 🔐 **Bóveda de información personal** - Almacenar documentos, pólizas, información sensible
@@ -63,7 +78,7 @@ Consulta el [ROADMAP.md](ROADMAP.md) para ver el plan completo. Algunas funciona
 - Cuenta de WhatsApp
 - (Opcional) API Key de Anthropic para IA
 - (Opcional) API Key de OpenWeatherMap para pronóstico del tiempo
-- (Opcional) Credenciales de Google Calendar
+- (Opcional) Credenciales de Google Calendar / Classroom
 
 ### Pasos
 
@@ -87,7 +102,7 @@ ANTHROPIC_API_KEY=tu_api_key_aqui
 # Pronóstico del Tiempo (Opcional pero recomendado)
 OPENWEATHER_API_KEY=tu_api_key_openweather
 
-# Google Calendar (Opcional)
+# Google Calendar & Classroom (Opcional pero recomendado)
 GOOGLE_CLIENT_ID=tu_client_id
 GOOGLE_CLIENT_SECRET=tu_client_secret
 GOOGLE_REDIRECT_URI=http://localhost:3000/oauth2callback
@@ -112,8 +127,15 @@ npm start
 - `1` - 🌤️ Pronóstico para hoy
 - `2` - 📅 Calendario & Recordatorios
 - `3` - 💰 Dividir Gastos
-- `4` - 🤖 Asistente IA
+- `4` - 🏫 Google Classroom (resúmenes)
+- `5` - 🤖 Asistente IA
+- `6` - 💱 Conversor de Monedas
+- `7` - 🤝 Invitar a un amigo
+- `8` - ⚙️ Configuración general (en desarrollo)
+- `9` - ℹ️ Ayuda
 - `recordatorios` - Ver y completar recordatorios (comando rápido)
+- `classroom` o `resumen classroom` - Abrir el módulo de Classroom desde cualquier parte
+- `convertir 100 usd a ars` (o `50 eur a usd`, etc.) - Conversión directa
 - `/feedback [mensaje]` - Enviar feedback
 - `/bug [descripción]` - Reportar error
 
@@ -127,6 +149,15 @@ npm start
 ### Ejemplos de Uso
 
 **Pronóstico del tiempo:**
+**Conversor de monedas:**
+```
+Usuario: convertir 150 usd a eur
+Bot: 💱 Conversión de Moneda
+     🔢 150,00 USD
+     ➡️ 137,85 EUR
+     💹 1 USD = 0,9190 EUR
+```
+
 ```
 Usuario: 1 (Pronóstico)
 Bot: [Detectando ubicación automáticamente...]
@@ -192,6 +223,12 @@ milobot/
 │   │   ├── menus.js
 │   │   ├── utils.js
 │   │   └── README.md
+│   ├── classroom-module/     # Módulo de resúmenes de Google Classroom
+│   │   ├── index.js
+│   │   ├── handlers.js
+│   │   ├── service.js
+│   │   ├── database.js
+│   │   └── menus.js
 │   └── weather-module/       # Módulo de pronóstico del tiempo
 │       ├── index.js
 │       ├── weather-api.js
@@ -214,12 +251,13 @@ milobot/
 
 **Nota:** Sin API Key, el bot puede detectar tu ubicación pero no mostrará el pronóstico completo.
 
-### Google Calendar
+### Google Calendar y Google Classroom
 1. Ve a [Google Cloud Console](https://console.cloud.google.com/)
 2. Crea un nuevo proyecto
-3. Habilita Google Calendar API
-4. Crea credenciales OAuth 2.0
+3. Habilita **Google Calendar API** y **Google Classroom API**
+4. Crea credenciales OAuth 2.0 (tipo aplicación web) y agrega las URLs de redirección necesarias
 5. Agrega las credenciales al `.env`
+6. Desde el bot, ve a *Calendario → Sync Google Calendar* o *Google Classroom → Conectar* para autorizar la cuenta
 
 ### Notificaciones
 Las notificaciones se envían automáticamente X minutos antes de cada evento. Puedes configurar el tiempo en el menú de configuración del calendario.
