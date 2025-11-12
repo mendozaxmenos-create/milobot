@@ -61,6 +61,35 @@ function parseNaturalDate(dateText) {
   if (ddmmyyyy) {
     return new Date(ddmmyyyy[3], ddmmyyyy[2] - 1, ddmmyyyy[1]);
   }
+
+  // Formato "DD de mes" o "DD mes"
+  const months = {
+    'enero': 0, 'febrero': 1, 'marzo': 2, 'abril': 3, 'mayo': 4, 'junio': 5,
+    'julio': 6, 'agosto': 7, 'septiembre': 8, 'setiembre': 8, 'octubre': 9,
+    'noviembre': 10, 'diciembre': 11
+  };
+
+  const monthMatch = text.match(/^(\d{1,2})\s+(?:de\s+)?([a-záéíóú]+)$/i);
+  if (monthMatch) {
+    const day = parseInt(monthMatch[1], 10);
+    const monthName = monthMatch[2].toLowerCase();
+    const monthIndex = months[monthName];
+
+    if (!isNaN(day) && monthIndex !== undefined) {
+      const nowYear = new Date().getFullYear();
+      const candidate = new Date(nowYear, monthIndex, day);
+
+      if (isNaN(candidate.getTime())) {
+        return null;
+      }
+
+      if (candidate < new Date()) {
+        candidate.setFullYear(nowYear + 1);
+      }
+
+      return candidate;
+    }
+  }
   
   return null;
 }
@@ -123,7 +152,35 @@ function combineDateAndTime(date, time) {
  * @returns {String} Fecha formateada
  */
 function formatDateForDisplay(dateStr) {
-  const date = new Date(dateStr);
+  if (!dateStr) {
+    return 'Sin fecha definida';
+  }
+
+  // Manejar diferentes formatos de fecha
+  let date;
+  
+  // Si es un string ISO con timezone (ej: "2025-11-10T18:30:00-03:00")
+  if (typeof dateStr === 'string' && dateStr.includes('T')) {
+    date = new Date(dateStr);
+  } 
+  // Si es un string con formato "YYYY-MM-DD HH:MM:SS"
+  else if (typeof dateStr === 'string' && dateStr.includes(' ')) {
+    date = new Date(dateStr.replace(' ', 'T'));
+  }
+  // Si es un string con formato "YYYY-MM-DD"
+  else if (typeof dateStr === 'string') {
+    date = new Date(dateStr);
+  }
+  // Si ya es un objeto Date
+  else {
+    date = dateStr instanceof Date ? dateStr : new Date(dateStr);
+  }
+  
+  // Validar que la fecha sea válida
+  if (isNaN(date.getTime())) {
+    return dateStr; // Retornar el string original si no se puede parsear
+  }
+  
   const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
   const months = [
     'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',

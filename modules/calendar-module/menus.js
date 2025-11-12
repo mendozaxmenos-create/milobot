@@ -2,6 +2,8 @@
 // 📅 MENÚS DEL MÓDULO DE CALENDARIO
 // ============================================
 
+const utils = require('./utils');
+
 /**
  * Menú principal del calendario
  */
@@ -10,15 +12,20 @@ function getMainMenu() {
 
 1️⃣ Ver hoy
 2️⃣ Agregar evento
-3️⃣ Próximos eventos
-4️⃣ Gestionar eventos
-5️⃣ Búsqueda
-6️⃣ Vista mensual
-7️⃣ ⚙️ Configuración
-8️⃣ 🔄 Sync Google Calendar
-9️⃣ Volver al menú
+3️⃣ ⏰ Agregar recordatorio
+4️⃣ 📋 Mis recordatorios
+5️⃣ Próximos eventos
+6️⃣ Gestionar eventos
+7️⃣ Búsqueda
+8️⃣ Vista mensual
+9️⃣ ⚙️ Configuración
+🔟 🔄 Sync Google Calendar
+1️⃣1️⃣ Volver al menú
 
-_¿Qué deseas hacer?_`;
+_¿Qué deseas hacer?_
+
+💡 Tip: Escribí *"recordatorios"* en cualquier momento para verlos y completarlos rápido.
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -32,7 +39,9 @@ function getUpcomingMenu() {
 3️⃣ Próximos 30 días
 4️⃣ Volver
 
-_Selecciona un período:_`;
+_Selecciona un período:_
+
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -44,9 +53,12 @@ function getManageMenu() {
 1️⃣ Editar evento
 2️⃣ Eliminar evento
 3️⃣ Ver todos mis eventos
-4️⃣ Volver
+4️⃣ ⏰ Ver/Completar recordatorios
+5️⃣ Volver
 
-_¿Qué deseas hacer?_`;
+_¿Qué deseas hacer?_
+
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -61,7 +73,9 @@ function getConfigMenu() {
 4️⃣ Conectar Google Calendar
 5️⃣ Volver
 
-_¿Qué deseas configurar?_`;
+_¿Qué deseas configurar?_
+
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -76,7 +90,9 @@ function getNotificationTimeMenu() {
 4️⃣ Personalizado
 5️⃣ Volver
 
-_¿Cuándo quieres ser notificado?_`;
+_¿Cuándo quieres ser notificado?_
+
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -90,8 +106,11 @@ function getCategoriesMenu() {
 3️⃣ Urgente
 4️⃣ Familia
 5️⃣ Otro
+6️⃣ Volver
 
-_Selecciona una categoría:_`;
+_Selecciona una categoría:_
+
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -104,8 +123,11 @@ function getRecurringMenu() {
 2️⃣ Diario
 3️⃣ Semanal
 4️⃣ Mensual
+5️⃣ Volver
 
-_¿Este evento se repite?_`;
+_¿Este evento se repite?_
+
+💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**
@@ -114,23 +136,48 @@ _¿Este evento se repite?_`;
 function getAddEventInstructions() {
   return `📝 *Agregar Evento*
 
-Envía tu evento en este formato:
+Escribe tu evento de forma natural, por ejemplo:
 
-*Título | Fecha | Hora | Categoría*
+*Ejemplos simples:*
+• "mañana dentista 18:30"
+• "reunión el lunes a las 3pm"
+• "cumpleaños maría el 15 de noviembre a las 20:00"
+• "dentista mañana a las 6"
+• "reunión trabajo el viernes 14:00"
 
-*Ejemplos:*
-• Reunión cliente | 2025-11-15 | 10:00 | trabajo
-• Cumpleaños María | 2025-12-20 | 18:00 | familia
-• Dentista | mañana | 15:30 | personal
+*También puedes usar el formato:*
+Título | Fecha | Hora | Categoría
 
 *Categorías disponibles:*
 personal, trabajo, urgente, familia
 
-_También puedes usar lenguaje natural para la fecha:_
-• mañana
-• pasado mañana
-• lunes próximo
-• 15 de noviembre`;
+_El bot entenderá lenguaje natural para fechas y horas_
+
+💡 Escribe *"volver"* o *"menu"* para regresar al menú anterior.`;
+}
+
+/**
+ * Instrucciones para agregar recordatorio
+ */
+function getAddReminderInstructions() {
+  return `⏰ *Agregar Recordatorio*
+
+Escribe tu recordatorio de forma natural, por ejemplo:
+
+*Ejemplos simples:*
+• "mañana llamar a mamá a las 10"
+• "recordar comprar leche el viernes"
+• "tomar medicamento a las 8am"
+• "revisar correo mañana 9:00"
+• "llamar al dentista el lunes"
+
+*También puedes usar el formato:*
+Título | Fecha | Hora
+
+_El bot entenderá lenguaje natural para fechas y horas._
+_Los recordatorios son más simples que los eventos y se enfocan en tareas rápidas._
+
+💡 Escribe *"volver"* o *"menu"* para regresar al menú anterior.`;
 }
 
 /**
@@ -139,16 +186,15 @@ _También puedes usar lenguaje natural para la fecha:_
 function getEventAddedMessage(event, withGoogle = false) {
   const googleMsg = withGoogle ? '\n✅ Sincronizado con Google Calendar' : '';
   
+  // Formatear fecha de manera legible
+  const formattedDate = utils.formatDateForDisplay(event.event_date);
+  
   return `✅ *Evento Agregado*
 
 📅 ${event.title}
-🕐 ${event.event_date}
+🕐 ${formattedDate}
 🏷️ ${event.category || 'personal'}
-🔔 Notificación: ${event.notification_time || 15} min antes${googleMsg}
-
-¿Deseas agregar otro evento?
-1. Sí
-2. No, volver al menú`;
+🔔 Notificación: ${event.notification_time || 15} min antes${googleMsg}`;
 }
 
 /**
@@ -165,11 +211,18 @@ function formatEventsList(events) {
     const recurring = event.is_recurring ? ' 🔄' : '';
     const google = event.google_event_id ? ' ☁️' : '';
     
+    // Formatear fecha de manera legible
+    const formattedDate = utils.formatDateForDisplay(event.event_date);
+    
     response += `${index + 1}. ${event.title}${recurring}${google}\n`;
-    response += `   📅 ${event.event_date}\n`;
+    response += `   📅 ${formattedDate}\n`;
     response += `   🏷️ ${event.category || 'personal'}\n`;
     if (event.description) {
       response += `   📝 ${event.description}\n`;
+    }
+    // Mostrar invitados si existen
+    if (event.invitees && event.invitees.length > 0) {
+      response += `   👥 Invitados: ${event.invitees.map(inv => inv.name).join(', ')}\n`;
     }
     response += '\n';
   });
@@ -224,6 +277,7 @@ module.exports = {
   getCategoriesMenu,
   getRecurringMenu,
   getAddEventInstructions,
+  getAddReminderInstructions,
   getEventAddedMessage,
   formatEventsList,
   getMonthView

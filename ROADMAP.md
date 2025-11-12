@@ -1,7 +1,7 @@
 # 🗺️ Hoja de Ruta - Milo Bot
 
 **Versión Actual:** v1.0.0  
-**Última Actualización:** 11 de noviembre de 2025
+**Última Actualización:** 12 de noviembre de 2025
 
 ---
 
@@ -127,6 +127,12 @@
   - Búsqueda multi-sitio, favoritos, tracking diario y alertas de baja
   - Generar links/códigos de referencia para monetizar compras
 
+#### 🎭 Entretenimiento y cultura
+- [ ] **Cartelera de espectáculos**
+  - Definir complejos, ciudades y categorías favoritas
+  - Consultar grillas de cine/teatro/conciertos y enviar recordatorios
+  - Integrar con calendario para agendar funciones seleccionadas
+
 #### 💰 Finanzas personales
 - [ ] **Presupuestos y categorías de gastos**
   - Límites por grupo, reportes por categoría y gráficos
@@ -138,6 +144,12 @@
   - Tomar una foto del precio (cartel/factura) y reconocer el importe
   - Ofrecer conversiones instantáneas dentro del menú de monedas
   - Reutilizar OCR/visión para leer el valor y sugerir divisas objetivo
+
+#### ❤️ Salud y bienestar
+- [ ] **Recordatorio inteligente de medicación**
+  - Escanear código de barras para identificar medicamento y posología
+  - Configurar cantidad de comprimidos, frecuencia y duración del tratamiento
+  - Alertas de toma, reposición de stock y seguimiento de adherencia
 
 #### 📣 Crecimiento & comunidad
 - [ ] **Invitar amigos al bot**
@@ -152,6 +164,12 @@
   - Sugerencias predictivas basadas en hábitos
 - [ ] **Motor de respuestas rápidas**
   - Configurar, listar y editar respuestas por keyword
+
+#### 🛍️ Operaciones comerciales
+- [ ] **Suite comercial (presupuestos & turnos)**
+  - Circuito completo estilo MonPatisserie: cotizaciones, aprobaciones y recordatorios
+  - Gestión de turnos/agenda por rubro con confirmaciones automáticas
+  - Historial por cliente, observaciones y seguimiento de estados
 
 ---
 

@@ -10,6 +10,10 @@ const google = require('./google');
 const notifications = require('./notifications');
 const utils = require('./utils');
 
+function setMainMenuProvider(fn) {
+  handlers.setGlobalMainMenu(fn);
+}
+
 /**
  * Manejador principal de mensajes del módulo de calendario
  * @param {Object} msg - Mensaje de WhatsApp
@@ -54,6 +58,7 @@ module.exports = {
   // Función principal
   handleCalendarMessage,
   startNotificationService,
+  setMainMenuProvider,
   
   // Submódulos (por si se necesitan acceder directamente)
   database,

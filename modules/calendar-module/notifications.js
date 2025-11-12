@@ -17,6 +17,13 @@ let db = null;
 function startService(client, dbInstance) {
   whatsappClient = client;
   db = dbInstance;
+
+  try {
+    const databaseModule = require('./database');
+    databaseModule.ensureSchemaCompatibility(db);
+  } catch (error) {
+    console.error('❌ No se pudo garantizar compatibilidad de esquema para notificaciones:', error.message);
+  }
   
   console.log('🔔 Iniciando servicio de notificaciones de calendario...');
   

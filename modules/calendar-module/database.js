@@ -2,16 +2,44 @@
 // 🗄️ FUNCIONES DE BASE DE DATOS - CALENDARIO
 // ============================================
 
+let hasDueDateChecked = false;
+
+function ensureHasDueDateColumn(db) {
+  if (!db || hasDueDateChecked) {
+    return;
+  }
+
+  try {
+    const columns = db.prepare(`PRAGMA table_info(calendar_events)`).all();
+    const exists = columns.some(col => col.name === 'has_due_date');
+
+    if (!exists) {
+      db.exec(`ALTER TABLE calendar_events ADD COLUMN has_due_date INTEGER DEFAULT 1`);
+      console.log('✅ Columna has_due_date agregada automáticamente a calendar_events');
+    }
+
+    hasDueDateChecked = true;
+  } catch (error) {
+    console.error('❌ No se pudo verificar/agregar columna has_due_date:', error.message);
+  }
+}
+
+function ensureSchemaCompatibility(db) {
+  ensureHasDueDateColumn(db);
+}
+
 /**
  * Agregar evento al calendario
  */
 function addEvent(db, userPhone, eventData) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     INSERT INTO calendar_events (
       user_phone, title, description, event_date, 
       category, is_recurring, recurring_type, recurring_end_date,
-      notification_time, google_event_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      notification_time, google_event_id, is_reminder, has_due_date
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   
   const result = stmt.run(
@@ -24,7 +52,9 @@ function addEvent(db, userPhone, eventData) {
     eventData.recurring_type || null,
     eventData.recurring_end_date || null,
     eventData.notification_time || 15,
-    eventData.google_event_id || null
+    eventData.google_event_id || null,
+    eventData.is_reminder || 0,
+    eventData.has_due_date === undefined ? 1 : eventData.has_due_date
   );
   
   return { success: true, id: result.lastInsertRowid };
@@ -34,66 +64,99 @@ function addEvent(db, userPhone, eventData) {
  * Obtener eventos de hoy
  */
 function getTodayEvents(db, userPhone) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     SELECT * FROM calendar_events
     WHERE user_phone = ? 
     AND DATE(event_date) = DATE('now', 'localtime')
     AND reminder_sent = 0
+    AND has_due_date = 1
     ORDER BY event_date
   `);
   
-  return stmt.all(userPhone);
+  const events = stmt.all(userPhone);
+  // Agregar invitados a cada evento
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
 }
 
 /**
  * Obtener próximos eventos
  */
 function getUpcomingEvents(db, userPhone, days = 7) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     SELECT * FROM calendar_events
     WHERE user_phone = ? 
     AND event_date >= datetime('now', 'localtime')
     AND event_date <= datetime('now', '+${days} days', 'localtime')
+    AND has_due_date = 1
     ORDER BY event_date
     LIMIT 20
   `);
   
-  return stmt.all(userPhone);
+  const events = stmt.all(userPhone);
+  // Agregar invitados a cada evento
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
 }
 
 /**
  * Obtener todos los eventos del usuario
  */
 function getAllUserEvents(db, userPhone) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     SELECT * FROM calendar_events
     WHERE user_phone = ?
     AND event_date >= datetime('now', 'localtime')
+    AND has_due_date = 1
     ORDER BY event_date
     LIMIT 50
   `);
   
-  return stmt.all(userPhone);
+  const events = stmt.all(userPhone);
+  // Agregar invitados a cada evento
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
 }
 
 /**
  * Buscar eventos por palabra clave
  */
 function searchEvents(db, userPhone, keyword) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     SELECT * FROM calendar_events
     WHERE user_phone = ?
     AND (
       LOWER(title) LIKE LOWER(?)
       OR LOWER(description) LIKE LOWER(?)
+      OR LOWER(category) LIKE LOWER(?)
     )
-    AND event_date >= datetime('now', 'localtime')
+    AND has_due_date = 1
+    AND event_date >= datetime('now', '-1 day', 'localtime')
     ORDER BY event_date
     LIMIT 20
   `);
   
   const searchTerm = `%${keyword}%`;
-  return stmt.all(userPhone, searchTerm, searchTerm);
+  const events = stmt.all(userPhone, searchTerm, searchTerm, searchTerm);
+  // Agregar invitados a cada evento
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
 }
 
 /**
@@ -177,21 +240,31 @@ function deleteEvent(db, eventId, userPhone) {
  * Obtener eventos del mes
  */
 function getMonthEvents(db, userPhone, year, month) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     SELECT * FROM calendar_events
     WHERE user_phone = ?
     AND strftime('%Y', event_date) = ?
     AND strftime('%m', event_date) = ?
+    AND has_due_date = 1
     ORDER BY event_date
   `);
   
-  return stmt.all(userPhone, year.toString(), month.toString().padStart(2, '0'));
+  const events = stmt.all(userPhone, year.toString(), month.toString().padStart(2, '0'));
+  // Agregar invitados a cada evento
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
 }
 
 /**
  * Marcar recordatorio como enviado
  */
 function markReminderSent(db, eventId) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     UPDATE calendar_events
     SET reminder_sent = 1
@@ -205,6 +278,8 @@ function markReminderSent(db, eventId) {
  * Obtener eventos que necesitan notificación
  */
 function getEventsNeedingNotification(db) {
+  ensureHasDueDateColumn(db);
+
   const stmt = db.prepare(`
     SELECT ce.*, ucs.notification_time as user_notification_time
     FROM calendar_events ce
@@ -212,6 +287,7 @@ function getEventsNeedingNotification(db) {
     WHERE ce.reminder_sent = 0
     AND ce.event_date > datetime('now', 'localtime')
     AND ce.event_date <= datetime('now', '+2 hours', 'localtime')
+    AND ce.has_due_date = 1
   `);
   
   return stmt.all();
@@ -336,6 +412,107 @@ function deleteGoogleTokens(db, userPhone) {
   stmt.run(userPhone);
 }
 
+/**
+ * Agregar invitado a un evento
+ */
+function addEventInvitee(db, eventId, name, phone) {
+  const stmt = db.prepare(`
+    INSERT INTO event_invitees (event_id, name, phone)
+    VALUES (?, ?, ?)
+  `);
+  
+  stmt.run(eventId, name, phone || null);
+  return { success: true };
+}
+
+/**
+ * Obtener invitados de un evento
+ */
+function getEventInvitees(db, eventId) {
+  const stmt = db.prepare(`
+    SELECT * FROM event_invitees
+    WHERE event_id = ?
+    ORDER BY created_at
+  `);
+  
+  return stmt.all(eventId);
+}
+
+/**
+ * Eliminar invitado de un evento
+ */
+function deleteEventInvitee(db, inviteeId) {
+  const stmt = db.prepare(`
+    DELETE FROM event_invitees
+    WHERE id = ?
+  `);
+  
+  stmt.run(inviteeId);
+  return { success: true };
+}
+
+/**
+ * Obtener recordatorios del usuario
+ */
+function getReminders(db, userPhone) {
+  ensureHasDueDateColumn(db);
+
+  const stmt = db.prepare(`
+    SELECT * FROM calendar_events
+    WHERE user_phone = ? 
+    AND is_reminder = 1
+    ORDER BY 
+      CASE WHEN has_due_date = 0 THEN 1 ELSE 0 END,
+      event_date
+  `);
+  
+  const reminders = stmt.all(userPhone);
+  return reminders.map(reminder => {
+    reminder.invitees = getEventInvitees(db, reminder.id);
+    return reminder;
+  });
+}
+
+/**
+ * Obtener recordatorios de hoy
+ */
+function getTodayReminders(db, userPhone) {
+  ensureHasDueDateColumn(db);
+
+  const stmt = db.prepare(`
+    SELECT * FROM calendar_events
+    WHERE user_phone = ? 
+    AND is_reminder = 1
+    AND has_due_date = 1
+    AND DATE(event_date) = DATE('now', 'localtime')
+    ORDER BY event_date
+  `);
+  
+  const reminders = stmt.all(userPhone);
+  return reminders.map(reminder => {
+    reminder.invitees = getEventInvitees(db, reminder.id);
+    return reminder;
+  });
+}
+
+function getUsersWithGoogleTokens(db) {
+  const stmt = db.prepare(`
+    SELECT user_phone, last_sync
+    FROM google_auth_tokens
+  `);
+
+  return stmt.all();
+}
+
+function updateGoogleLastSync(db, userPhone, timestamp = Date.now()) {
+  const stmt = db.prepare(`
+    UPDATE google_auth_tokens
+    SET last_sync = ?
+    WHERE user_phone = ?
+  `);
+  stmt.run(timestamp, userPhone);
+}
+
 module.exports = {
   addEvent,
   getTodayEvents,
@@ -353,5 +530,13 @@ module.exports = {
   updateUserSettings,
   saveGoogleTokens,
   getGoogleTokens,
-  deleteGoogleTokens
+  deleteGoogleTokens,
+  getUsersWithGoogleTokens,
+  updateGoogleLastSync,
+  addEventInvitee,
+  getEventInvitees,
+  deleteEventInvitee,
+  getReminders,
+  getTodayReminders,
+  ensureSchemaCompatibility
 };
