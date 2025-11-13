@@ -626,9 +626,10 @@ async function detectAndSaveUserLocation(userPhone) {
       const formattedNumber = `${userPhone}@c.us`;
       const userName = userRow?.name || '¡Hola!';
       const suggestionMessage =
-        `📍 ${userName === '¡Hola!' ? 'Hola' : `Hola *${userName}*`}! Detecté que podrías estar en *${locationLabel}*.\n\n` +
-        `¿Querés que guarde esta ubicación para mostrarte el pronóstico automáticamente?\n\n` +
-        `1️⃣ Sí, guardala\n2️⃣ No, prefiero indicarla manualmente\n\n` +
+        `📍 ${userName === '¡Hola!' ? 'Hola' : `Hola *${userName}*`}! Detecté una ubicación aproximada: *${locationLabel}*.\n\n` +
+        `⚠️ *Nota:* Esta ubicación se detecta desde el servidor y puede no ser precisa.\n\n` +
+        `¿Querés que guarde esta ubicación o preferís escribir tu ciudad manualmente?\n\n` +
+        `1️⃣ Sí, guardala (puede no ser precisa)\n2️⃣ No, prefiero indicarla manualmente\n\n` +
         `💡 Podés cambiarla en cualquier momento escribiendo el nombre de tu ciudad.`;
 
       try {
@@ -3848,12 +3849,19 @@ async function handleMessage(msg) {
   
   console.log(`👤 Nombre del contacto: ${userName}`);
 
-  const userInfo = registerUser(userPhone, userName);
+  // Normalizar el teléfono antes de guardarlo en la base de datos
+  const normalizedUserPhone = normalizePhone(userPhone);
+  if (!normalizedUserPhone) {
+    console.error(`[ERROR] No se pudo normalizar el teléfono: ${userPhone}`);
+    return;
+  }
+
+  const userInfo = registerUser(normalizedUserPhone, userName);
 
   // Track cualquier mensaje directo recibido para estadísticas del dashboard
   try {
     const messagePreview = messageText ? messageText.slice(0, 200) : '';
-    statsModule.trackEvent(db, userPhone, 'direct_message', {
+    statsModule.trackEvent(db, normalizedUserPhone, 'direct_message', {
       messageType: msgType,
       length: messageText ? messageText.length : 0,
       hasMedia: msg.hasMedia || false,
@@ -3879,7 +3887,7 @@ async function handleMessage(msg) {
   if (userInfo.isNewUser) {
     // Trackear registro de nuevo usuario
     try {
-      statsModule.trackEvent(db, userPhone, 'user_registered', {
+      statsModule.trackEvent(db, normalizedUserPhone, 'user_registered', {
         userName,
         registrationMethod: 'whatsapp',
         timestamp: new Date().toISOString()
@@ -4418,35 +4426,14 @@ async function handleMessage(msg) {
       response = getMainMenu(userName);
       updateSession(userPhone, 'main');
     }
-    else if (messageText === '1' || messageText === '1️⃣' || messageText.toLowerCase() === 'automático' || messageText.toLowerCase() === 'automatico') {
-      try {
-        const forecastAuto = await weatherModule.getWeatherForecast(
-          db,
-          userPhone,
-          userName,
-          { autoDetect: true, forceIpSuggestion: true }
-        );
-        response = forecastAuto.message;
-        if (!response) {
-          response = '⏳ Detectando tu ubicación... Por favor espera un momento.';
-        }
-        if (forecastAuto.pendingLocation) {
-          updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecastAuto.pendingLocation }));
-        } else {
-          updateSession(userPhone, 'weather', null);
-        }
-      } catch (error) {
-        console.error('[ERROR] Error en detección automática:', error);
-        console.error('[ERROR] Stack:', error.stack);
-        response = `❌ Error al detectar tu ubicación automáticamente.\n\n` +
-          `Error: ${error.message}\n\n` +
-          `Por favor intenta escribir el nombre de tu ciudad manualmente (opción 2).`;
-        updateSession(userPhone, 'weather', null);
-      }
+    // Opción 1: Escribir ciudad manualmente (recomendado)
+    else if (messageText === '1' || messageText === '1️⃣') {
+      response = '🌤️ *Escribir Ciudad*\n\nEscribe el nombre de tu ciudad:\n\n_Ejemplos:_\n• Nombre completo: Buenos Aires, Mendoza, Córdoba\n• Abreviado: bue, mend, cord\n• También podés escribir directamente la ciudad';
+      updateSession(userPhone, 'weather_city');
     }
-    // Opción 2: Escribir ciudad manualmente
+    // Opción 2: Cambiar de ciudad
     else if (messageText === '2' || messageText === '2️⃣') {
-      response = '🌤️ *Escribir Ciudad*\n\nEscribe el nombre de tu ciudad:\n\n_Ejemplo: Mendoza, Buenos Aires, Córdoba, Rosario_';
+      response = '🌤️ *Cambiar Ciudad*\n\nEscribe el nombre de tu nueva ciudad:\n\n_Ejemplo: Mendoza, Buenos Aires, Córdoba, Rosario_';
       updateSession(userPhone, 'weather_city');
     }
     else if (messageText === '3' || messageText === '3️⃣') {

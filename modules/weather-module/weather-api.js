@@ -91,17 +91,93 @@ async function getCityCoordinates(city) {
       console.log(`[DEBUG] Ciudad limpiada: "${cleanCity}"`);
     }
     
-    // Lista de ciudades argentinas comunes
-    const argentinaCities = ['mendoza', 'buenos aires', 'córdoba', 'cordoba', 'rosario', 'la plata', 'mar del plata', 'salta', 'santa fe', 'san juan', 'resistencias', 'neuquén', 'neuquen', 'santiago del estero', 'corrientes', 'bahía blanca', 'bahia blanca', 'posadas', 'paraná', 'parana', 'formosa', 'san salvador de jujuy', 'la rioja', 'catamarca', 'san luis', 'río cuarto', 'rio cuarto', 'comodoro rivadavia', 'san rafael', 'tandil', 'villa maría', 'villa maria', 'venado tuerto', 'gualeguaychú', 'gualeguaychu', 'reconquista', 'zárate', 'zarate'];
+    // Lista de ciudades argentinas comunes con sus posibles abreviaciones
+    const argentinaCities = [
+      { name: 'mendoza', aliases: ['mend', 'men'] },
+      { name: 'buenos aires', aliases: ['bue', 'bs as', 'bsas', 'caba', 'capital'] },
+      { name: 'córdoba', aliases: ['cord', 'cba'] },
+      { name: 'cordoba', aliases: ['cord', 'cba'] },
+      { name: 'rosario', aliases: ['rosa'] },
+      { name: 'la plata', aliases: ['plata', 'lp'] },
+      { name: 'mar del plata', aliases: ['mdp', 'mar del'] },
+      { name: 'salta', aliases: [] },
+      { name: 'santa fe', aliases: ['sf', 'santa'] },
+      { name: 'san juan', aliases: ['sj'] },
+      { name: 'resistencias', aliases: ['resi'] },
+      { name: 'neuquén', aliases: ['neu', 'neuquen'] },
+      { name: 'neuquen', aliases: ['neu'] },
+      { name: 'santiago del estero', aliases: ['santiago', 'sde'] },
+      { name: 'corrientes', aliases: ['corr'] },
+      { name: 'bahía blanca', aliases: ['bahia blanca', 'bb', 'bahia'] },
+      { name: 'bahia blanca', aliases: ['bb', 'bahia'] },
+      { name: 'posadas', aliases: [] },
+      { name: 'paraná', aliases: ['parana'] },
+      { name: 'parana', aliases: [] },
+      { name: 'formosa', aliases: [] },
+      { name: 'san salvador de jujuy', aliases: ['jujuy', 'san salvador'] },
+      { name: 'la rioja', aliases: ['rioja', 'lr'] },
+      { name: 'catamarca', aliases: ['cata'] },
+      { name: 'san luis', aliases: ['sl'] },
+      { name: 'río cuarto', aliases: ['rio cuarto', 'rc'] },
+      { name: 'rio cuarto', aliases: ['rc'] },
+      { name: 'comodoro rivadavia', aliases: ['comodoro', 'cr'] },
+      { name: 'san rafael', aliases: ['sr'] },
+      { name: 'tandil', aliases: [] },
+      { name: 'villa maría', aliases: ['villa maria', 'vm'] },
+      { name: 'villa maria', aliases: ['vm'] },
+      { name: 'venado tuerto', aliases: ['venado', 'vt'] },
+      { name: 'gualeguaychú', aliases: ['gualeguaychu'] },
+      { name: 'gualeguaychu', aliases: [] },
+      { name: 'reconquista', aliases: ['recon'] },
+      { name: 'zárate', aliases: ['zarate'] },
+      { name: 'zarate', aliases: [] }
+    ];
     
     const cityLower = cleanCity.toLowerCase().trim();
-    const isArgentinaCity = argentinaCities.some(c => c === cityLower);
+    
+    // Buscar coincidencia exacta o parcial
+    let matchedCity = null;
+    let isArgentinaCity = false;
+    
+    // Primero buscar coincidencia exacta
+    matchedCity = argentinaCities.find(c => c.name === cityLower);
+    if (matchedCity) {
+      isArgentinaCity = true;
+    } else {
+      // Buscar en aliases (abreviaciones)
+      matchedCity = argentinaCities.find(c => 
+        c.aliases.some(alias => alias === cityLower)
+      );
+      if (matchedCity) {
+        isArgentinaCity = true;
+        console.log(`[DEBUG] Ciudad encontrada por alias: "${cityLower}" → "${matchedCity.name}"`);
+      } else {
+        // Buscar coincidencia parcial (que empiece con el texto ingresado)
+        const partialMatches = argentinaCities.filter(c => 
+          c.name.startsWith(cityLower) || 
+          c.aliases.some(alias => alias.startsWith(cityLower))
+        );
+        if (partialMatches.length === 1) {
+          matchedCity = partialMatches[0];
+          isArgentinaCity = true;
+          console.log(`[DEBUG] Ciudad encontrada por coincidencia parcial: "${cityLower}" → "${matchedCity.name}"`);
+        } else if (partialMatches.length > 1) {
+          // Múltiples coincidencias parciales - usar la primera más probable
+          matchedCity = partialMatches[0];
+          isArgentinaCity = true;
+          console.log(`[DEBUG] Múltiples coincidencias parciales, usando: "${matchedCity.name}"`);
+        }
+      }
+    }
+    
     console.log(`[DEBUG] ¿Es ciudad argentina conocida? ${isArgentinaCity}`);
     
     // Si es una ciudad argentina conocida, buscar directamente con ", Argentina"
-    if (isArgentinaCity) {
-      console.log(`[DEBUG] Ciudad argentina detectada, buscando con ", Argentina"`);
-      let url = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(cleanCity)},Argentina&limit=5&appid=${API_KEY}`;
+    if (isArgentinaCity && matchedCity) {
+      // Usar el nombre completo de la ciudad encontrada, no el texto ingresado
+      const cityToSearch = matchedCity.name;
+      console.log(`[DEBUG] Ciudad argentina detectada, buscando con ", Argentina": "${cityToSearch}"`);
+      let url = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(cityToSearch)},Argentina&limit=5&appid=${API_KEY}`;
       console.log(`[DEBUG] URL de búsqueda: ${url.replace(API_KEY, 'API_KEY_HIDDEN')}`);
       let data = await makeRequest(url);
       
@@ -173,12 +249,13 @@ async function getCityCoordinates(city) {
     }
     
     // Si aún no se encontró y es una ciudad argentina, intentar sin acentos
-    if (isArgentinaCity) {
-      const cityWithoutAccents = cleanCity
+    if (isArgentinaCity && matchedCity) {
+      const cityToTry = matchedCity.name;
+      const cityWithoutAccents = cityToTry
         .replace(/á/g, 'a').replace(/é/g, 'e').replace(/í/g, 'i')
         .replace(/ó/g, 'o').replace(/ú/g, 'u').replace(/ñ/g, 'n');
       
-      if (cityWithoutAccents !== cleanCity) {
+      if (cityWithoutAccents !== cityToTry) {
         console.log(`[DEBUG] Intentando sin acentos: "${cityWithoutAccents}"`);
         url = `https://api.openweathermap.org/geo/1.0/direct?q=${encodeURIComponent(cityWithoutAccents)},Argentina&limit=5&appid=${API_KEY}`;
         console.log(`[DEBUG] URL de búsqueda sin acentos: ${url.replace(API_KEY, 'API_KEY_HIDDEN')}`);

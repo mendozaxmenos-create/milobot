@@ -333,7 +333,7 @@ function buildLocationLabel(city, country) {
 
 function buildWeatherMenu(currentLocation = null) {
   const locationLine = currentLocation ? `📍 Ubicación actual: *${currentLocation}*\n\n` : '';
-  return `\n\n${locationLine}*Opciones:*\n1️⃣ Detectar ubicación automáticamente\n2️⃣ Cambiar de ciudad\n3️⃣ Volver al menú principal\n\n📌 Tip: Podés escribir directamente otra ciudad para consultarla.\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
+  return `\n\n${locationLine}*Opciones:*\n1️⃣ Escribir ciudad manualmente (recomendado)\n2️⃣ Cambiar de ciudad\n3️⃣ Volver al menú principal\n\n📌 *Tips:*\n• Podés escribir el nombre completo o abreviado (ej: "bue" para Buenos Aires)\n• También podés escribir directamente otra ciudad para consultarla\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
 }
 
 /**

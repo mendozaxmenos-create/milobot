@@ -7,6 +7,13 @@ function getServerOffsetMinutes() {
   return -new Date().getTimezoneOffset();
 }
 
+function normalizePhone(phone = '') {
+  if (!phone) return null;
+  const digits = phone.replace(/\D/g, '');
+  if (!digits || digits.length < 6 || digits.length > 15) return null;
+  return digits;
+}
+
 function getUserTimezoneInfo(db, userPhone) {
   const row = db.prepare(`
     SELECT timezone_name, timezone_offset_minutes
@@ -475,8 +482,19 @@ Escribí *cancelar* si querés salir.`,
     const sendAtStr = formatDateTimeForSQLite(adjustedDate);
     const targetChat = context.targetChat || userPhone;
     const targetType = context.targetType || 'user';
+    
+    // Normalizar el teléfono del creador antes de guardarlo
+    const normalizedCreatorPhone = normalizePhone(userPhone);
+    if (!normalizedCreatorPhone) {
+      return {
+        message: '❌ Error: No se pudo normalizar tu número de teléfono. Por favor, intenta nuevamente.',
+        nextModule: 'main',
+        context: null
+      };
+    }
+    
     const messageId = createScheduledMessage(db, {
-      creatorPhone: userPhone,
+      creatorPhone: normalizedCreatorPhone,
       targetChat,
       targetType,
       messageBody: context.messageBody,
