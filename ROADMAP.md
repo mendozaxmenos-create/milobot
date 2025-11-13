@@ -1,7 +1,7 @@
 # 🗺️ Hoja de Ruta - Milo Bot
 
 **Versión Actual:** v1.2.0  
-**Última Actualización:** 13 de noviembre de 2025
+**Última Actualización:** 13 de noviembre de 2025 (actualizado con requisitos ARCA)
 
 ---
 
@@ -283,8 +283,59 @@
 - [ ] **Soporte multimedia completo**
   - Enviar imágenes/archivos, procesar fotos (OCR/facturas) y transcribir audios
   - Generar códigos QR y crear recordatorios desde voice notes
-- [ ] **Facturación automatizada (ARCA)**
-  - Integración API, generación de comprobantes y envío PDF
+- [ ] **Facturación automatizada (ARCA)** ⏳
+  - **Requisitos técnicos:**
+    - Integración con servicios web SOAP de ARCA (Web Service de Facturación Electrónica)
+    - Certificados digitales ARCA (certificado.pem y clave privada.key)
+    - CUIT del emisor registrado en ARCA
+    - Configuración de punto de venta (PtoVta)
+    - Entorno de prueba (homologación) y producción
+  - **Funcionalidades del menú:**
+    - Acceso desde menú principal: "Facturación" o "ARCA"
+    - Flujo conversacional para crear factura:
+      1. Seleccionar tipo de comprobante (Factura A, B, C, etc.)
+      2. Ingresar datos del cliente (CUIT/DNI, razón social, dirección)
+      3. Agregar conceptos/productos (descripción, cantidad, precio unitario, IVA)
+      4. Revisar resumen de la factura
+      5. Confirmar y generar comprobante
+    - Generación de CAE (Código de Autorización Electrónico) vía API ARCA
+    - Generación de PDF del comprobante
+    - Envío automático del PDF al usuario/cliente por WhatsApp
+    - Almacenamiento de facturas generadas en base de datos
+    - Historial de facturas emitidas con búsqueda y filtros
+  - **Datos requeridos para facturación:**
+    - **Emisor (configuración única por usuario):**
+      - CUIT
+      - Razón social
+      - Domicilio fiscal
+      - Condición frente a IVA
+      - Punto de venta (PtoVta)
+      - Certificados ARCA (almacenados de forma segura)
+    - **Por cada factura:**
+      - Tipo de comprobante (Factura A, B, C, Nota de Crédito, etc.)
+      - Tipo y número de documento del cliente (CUIT, DNI, etc.)
+      - Razón social del cliente
+      - Domicilio del cliente
+      - Concepto (productos/servicios)
+      - Cantidad, precio unitario, IVA
+      - Fecha de emisión
+  - **Consideraciones técnicas:**
+    - Implementar cliente SOAP en Node.js (usar `soap` o `axios` con SOAP)
+    - Manejo de tokens de autenticación ARCA (renovación automática)
+    - Validación de datos antes de enviar a ARCA
+    - Manejo de errores y códigos de respuesta de ARCA
+    - Almacenamiento seguro de certificados (encriptados)
+    - Logging de todas las operaciones de facturación
+    - Soporte para ambiente de prueba (homologación) y producción
+  - **Base de datos:**
+    - Tabla `arca_config` (configuración por usuario: CUIT, certificados, PtoVta)
+    - Tabla `invoices` (facturas generadas: CAE, número, fecha, cliente, monto, PDF path)
+    - Tabla `invoice_items` (detalle de conceptos por factura)
+  - **Seguridad:**
+    - Encriptación de certificados y claves privadas
+    - Validación de permisos (solo usuarios autorizados pueden facturar)
+    - Auditoría de operaciones de facturación
+    - Cumplimiento con normativas AFIP
 
 #### 🛠️ Plataforma & WhatsApp Business
 - [ ] **Migración a WhatsApp Business API**
@@ -483,7 +534,7 @@
 
 ---
 
-**Última revisión:** 13 de noviembre de 2025  
+**Última revisión:** 13 de noviembre de 2025 (requisitos ARCA agregados)  
 **Próxima revisión:** Diciembre 2025
 
 ---

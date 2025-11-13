@@ -54,6 +54,7 @@
 - 📊 Analytics y reportes
 - 🌐 Dashboard web
 - 💎 Features exclusivas premium
+- 🧾 **Facturación automatizada (ARCA)** - Generación de comprobantes electrónicos y envío por WhatsApp
 
 ### Q4 2025 - Escalabilidad (8-10 semanas)
 **Enfoque:** Preparar para crecimiento
@@ -90,6 +91,7 @@
 - ✈️ Asistente de viajes con división de gastos
 - ✅ Gestión de tareas (To-Do) integrada
 - 📊 Dashboard web para usuarios premium
+- 🧾 **Facturación ARCA** - Generación y envío de facturas electrónicas desde WhatsApp
 
 ---
 
@@ -101,5 +103,5 @@
 
 ---
 
-*Última actualización: Noviembre 2025*
+*Última actualización: Noviembre 2025 (requisitos ARCA agregados)*
 

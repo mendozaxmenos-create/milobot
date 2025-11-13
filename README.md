@@ -86,6 +86,16 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, pronóstico del t
 
 ## 🚧 Próximas Funcionalidades
 
+### 🧾 Facturación Automatizada (ARCA)
+- Generación de comprobantes electrónicos desde WhatsApp
+- Flujo conversacional para crear facturas (Factura A, B, C)
+- Envío automático de PDF al cliente
+- Historial de facturas emitidas
+- Integración con servicios web SOAP de ARCA
+- Ver detalles completos en [ROADMAP.md](./ROADMAP.md)
+
+## 🚧 Otras Funcionalidades Planificadas
+
 Consulta el [ROADMAP.md](ROADMAP.md) para ver el plan completo. Algunas funcionalidades en desarrollo:
 
 - 🍎 **Contador de calorías por IA** - Analizar fotos de comida para contar calorías
