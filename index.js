@@ -2630,7 +2630,30 @@ function markFeedbackAsRead(id) {
 
 function getMainMenu(userName = '') {
   const greeting = userName ? `Hola *${userName}*! 👋\n\n` : '';
-  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 💰 Dividir Gastos\n4️⃣ 🏫 Google Classroom\n5️⃣ 🤖 Asistente IA\n6️⃣ 💱 Conversor de Monedas\n7️⃣ 🤝 Invitar a un amigo\n8️⃣ ⚙️ Configuración\n9️⃣ ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
+  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 💰 Dividir Gastos\n4️⃣ 🏫 Google Classroom\n5️⃣ 🤖 Asistente IA\n6️⃣ 💱 Conversor de Monedas\n7️⃣ 🤝 Invitar a un amigo\n8️⃣ ⚙️ Configuración\n9️⃣ 🗓️ Programar Mensajes\n🔟 ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
+}
+
+function getScheduledMessagesMenu(userPhone, userName = '') {
+  const scheduledMessagesModule = require('./modules/scheduled-messages');
+  const normalizedPhone = normalizePhone(userPhone);
+  const limitInfo = scheduledMessagesModule.checkDailyLimit(db, normalizedPhone);
+  const pendingCount = scheduledMessagesModule.getPendingCount(db, normalizedPhone);
+  
+  let menu = `🗓️ *Programar Mensajes*\n\n`;
+  menu += `📊 Estado: ${pendingCount}/${limitInfo.limit} mensajes programados\n\n`;
+  menu += `*Opciones:*\n\n`;
+  menu += `1️⃣ Programar nuevo mensaje\n`;
+  menu += `2️⃣ Ver mensajes programados\n`;
+  menu += `3️⃣ Cancelar mensaje (por ID)\n`;
+  menu += `4️⃣ Cancelar todos los mensajes\n`;
+  menu += `5️⃣ Volver al menú principal\n\n`;
+  menu += `💡 *Tips:*\n`;
+  menu += `• Podés programar mensajes con lenguaje natural\n`;
+  menu += `• Ejemplos: "en 2 minutos", "mañana 10:00", "hoy 11:45 am"\n`;
+  menu += `• Podés enviar a vos mismo o a otros contactos\n\n`;
+  menu += `Escribí *"volver"* o *"menu"* para regresar.`;
+  
+  return menu;
 }
 
 calendarModule.setMainMenuProvider(getMainMenu);
@@ -4110,10 +4133,93 @@ async function handleMessage(msg) {
     }
   }
 
+  // Manejar menú de mensajes programados
+  if (currentModule === 'scheduled_messages_menu') {
+    const scheduledMessagesModule = require('./modules/scheduled-messages');
+    const lower = messageText.toLowerCase().trim();
+    const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
+    
+    if (lower === 'menu' || lower === 'menú' || lower === 'volver' || messageText === '5' || messageText === '5️⃣') {
+      response = getMainMenu(userName);
+      updateSession(phoneToUse, 'main');
+    }
+    else if (messageText === '1' || messageText === '1️⃣') {
+      // Programar nuevo mensaje
+      const flowStart = scheduledMessagesModule.startSchedulingFlow(db, phoneToUse, userName);
+      response = flowStart.message;
+      if (!flowStart.abort) {
+        updateSession(phoneToUse, flowStart.nextModule, flowStart.context);
+      } else {
+        updateSession(phoneToUse, 'scheduled_messages_menu');
+      }
+    }
+    else if (messageText === '2' || messageText === '2️⃣') {
+      // Ver mensajes programados
+      const items = scheduledMessagesModule.listScheduledMessages(db, phoneToUse);
+      const tzInfo = scheduledMessagesModule.getUserTimezoneInfo(db, phoneToUse);
+      response = scheduledMessagesModule.formatScheduledList(items, tzInfo.offsetMinutes);
+      updateSession(phoneToUse, 'scheduled_messages_menu');
+    }
+    else if (messageText === '3' || messageText === '3️⃣') {
+      // Cancelar mensaje por ID
+      response = '🗓️ *Cancelar Mensaje*\n\nEscribí el ID del mensaje que querés cancelar:\n\n_Ejemplo: cancelar mensaje 5_\n\nO escribí *"volver"* para regresar.';
+      updateSession(phoneToUse, 'scheduled_messages_cancel');
+    }
+    else if (messageText === '4' || messageText === '4️⃣') {
+      // Cancelar todos los mensajes
+      const cancelledCount = scheduledMessagesModule.cancelAllScheduledMessages(db, phoneToUse);
+      if (cancelledCount > 0) {
+        response = `✅ Cancelé ${cancelledCount} mensaje${cancelledCount === 1 ? '' : 's'} programado${cancelledCount === 1 ? '' : 's'}.\n\n${getScheduledMessagesMenu(phoneToUse, userName)}`;
+      } else {
+        response = `ℹ️ No tenés mensajes programados pendientes para cancelar.\n\n${getScheduledMessagesMenu(phoneToUse, userName)}`;
+      }
+      updateSession(phoneToUse, 'scheduled_messages_menu');
+    }
+    else {
+      response = getScheduledMessagesMenu(phoneToUse, userName);
+    }
+    
+    await msg.reply(response);
+    return;
+  }
+  
+  // Manejar cancelación de mensaje por ID
+  if (currentModule === 'scheduled_messages_cancel') {
+    const scheduledMessagesModule = require('./modules/scheduled-messages');
+    const lower = messageText.toLowerCase().trim();
+    const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
+    
+    if (lower === 'menu' || lower === 'menú' || lower === 'volver') {
+      response = getScheduledMessagesMenu(phoneToUse, userName);
+      updateSession(phoneToUse, 'scheduled_messages_menu');
+      await msg.reply(response);
+      return;
+    }
+    
+    // Intentar parsear "cancelar mensaje X" o solo el número
+    const cancelMatch = lower.match(/^(?:cancelar mensaje|cancelar msg|cancelar)\s*(\d+)$/) || lower.match(/^(\d+)$/);
+    if (cancelMatch) {
+      const messageId = parseInt(cancelMatch[1], 10);
+      const cancelled = scheduledMessagesModule.cancelScheduledMessage(db, phoneToUse, messageId);
+      if (cancelled) {
+        response = `✅ Mensaje programado #${messageId} cancelado.\n\n${getScheduledMessagesMenu(phoneToUse, userName)}`;
+      } else {
+        response = `❌ No encontré un mensaje programado pendiente con el ID #${messageId}.\n\n${getScheduledMessagesMenu(phoneToUse, userName)}`;
+      }
+      updateSession(phoneToUse, 'scheduled_messages_menu');
+    } else {
+      response = `❌ Necesito un número de mensaje válido. Ejemplo: *cancelar mensaje 12*\n\nO escribí *"volver"* para regresar.`;
+    }
+    
+    await msg.reply(response);
+    return;
+  }
+
   if (currentModule && currentModule.startsWith('scheduled_message')) {
+    const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
     const flowResult = await scheduledMessagesModule.handleFlowMessage({
       db,
-      userPhone,
+      userPhone: phoneToUse,
       userName,
       messageText,
       session
@@ -4122,9 +4228,9 @@ async function handleMessage(msg) {
     if (flowResult) {
       await msg.reply(flowResult.message);
       if (flowResult.nextModule) {
-        updateSession(userPhone, flowResult.nextModule, flowResult.context || null);
+        updateSession(phoneToUse, flowResult.nextModule, flowResult.context || null);
       } else {
-        updateSession(userPhone, 'main', null);
+        updateSession(phoneToUse, 'main', null);
       }
       return;
     }
@@ -4409,7 +4515,15 @@ async function handleMessage(msg) {
         statsModule.trackModuleAccess(db, userPhone, 'settings');
         response = '⚙️ *Configuración general*\n\nPronto vas a poder administrar preferencias generales desde aquí.\nPor ahora, configura cada módulo desde sus propios menús.\n\nEscribe *menu* para volver al inicio.';
         break;
-      case '9':
+      case '9': {
+        const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
+        statsModule.trackModuleAccess(db, phoneToUse, 'scheduled_messages');
+        response = getScheduledMessagesMenu(phoneToUse, userName);
+        updateSession(phoneToUse, 'scheduled_messages_menu');
+        break;
+      }
+      case '10':
+      case '0':
         statsModule.trackModuleAccess(db, userPhone, 'help');
         response = 'ℹ️ *Ayuda*\n\nPuedes interactuar de dos formas:\n\n*📱 Por menús:* Navega con números\n*💬 Por voz:* Habla naturalmente\n\nEjemplos:\n- "Recuérdame mañana comprar pan"\n- "Crea un grupo para el asado"\n- "¿Cuánto debo?"\n\nEscribe *menu* para volver al inicio.\n\n*📝 Reportar problemas:*\n• */feedback* - Dejar comentario\n• */bug* - Reportar error\n• */sugerencia* - Nueva idea\n\n_⚠️ Importante: La sesión se cierra después de 5 min sin actividad._';
         break;
