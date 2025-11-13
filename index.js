@@ -2630,7 +2630,7 @@ function markFeedbackAsRead(id) {
 
 function getMainMenu(userName = '') {
   const greeting = userName ? `Hola *${userName}*! 👋\n\n` : '';
-  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 💰 Dividir Gastos\n4️⃣ 🏫 Google Classroom\n5️⃣ 🤖 Asistente IA\n6️⃣ 💱 Conversor de Monedas\n7️⃣ 🤝 Invitar a un amigo\n8️⃣ ⚙️ Configuración\n9️⃣ 🗓️ Programar Mensajes\n🔟 ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
+  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 🗓️ Programar Mensajes\n4️⃣ 💰 Dividir Gastos\n5️⃣ 🏫 Google Classroom\n6️⃣ 🤖 Asistente IA\n7️⃣ 💱 Conversor de Monedas\n8️⃣ 🤝 Invitar a un amigo\n9️⃣ ⚙️ Configuración\n🔟 ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
 }
 
 function getScheduledMessagesMenu(userPhone, userName = '') {
@@ -4475,12 +4475,20 @@ async function handleMessage(msg) {
         );
         updateSession(userPhone, 'calendar');
         break;
-      case '3':
+      case '3': {
+        // Programar Mensajes
+        const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
+        statsModule.trackModuleAccess(db, phoneToUse, 'scheduled_messages');
+        response = getScheduledMessagesMenu(phoneToUse, userName);
+        updateSession(phoneToUse, 'scheduled_messages_menu');
+        break;
+      }
+      case '4':
         statsModule.trackModuleAccess(db, userPhone, 'expenses');
         response = getExpensesMenu(userPhone);
         updateSession(userPhone, 'expenses');
         break;
-      case '4': {
+      case '5': {
         statsModule.trackModuleAccess(db, userPhone, 'classroom');
         response = await classroomModule.handleClassroomMessage(
           msg,
@@ -4494,34 +4502,27 @@ async function handleMessage(msg) {
         );
         break;
       }
-      case '5':
+      case '6':
         statsModule.trackModuleAccess(db, userPhone, 'ai');
         response = `Hola *${userName}*! 🤖\n\nModo IA activado. Habla naturalmente y te ayudaré.\n\n_La sesión se cerrará automáticamente después de 5 minutos de inactividad._`;
         updateSession(userPhone, 'ai');
         break;
-      case '6': {
+      case '7': {
         statsModule.trackModuleAccess(db, userPhone, 'currency');
         const startCurrency = currencyModule.startCurrencyFlow(db, userPhone);
         response = startCurrency.message;
         updateSession(userPhone, 'currency', startCurrency.context);
         break;
       }
-      case '7':
+      case '8':
         statsModule.trackModuleAccess(db, userPhone, 'invite');
         response = '🤝 *Invitar a un amigo*\n\n¿Cómo querés compartir la invitación?\n\n1️⃣ Compartir contacto de WhatsApp\n2️⃣ Escribir número manualmente\n3️⃣ Cancelar\n\n💡 Podés escribir *"volver"* en cualquier momento para regresar al menú.';
         updateSession(userPhone, 'invite_friend_method', JSON.stringify({ inviterName: userName, inviterPhone: userPhone }));
         break;
-      case '8':
+      case '9':
         statsModule.trackModuleAccess(db, userPhone, 'settings');
         response = '⚙️ *Configuración general*\n\nPronto vas a poder administrar preferencias generales desde aquí.\nPor ahora, configura cada módulo desde sus propios menús.\n\nEscribe *menu* para volver al inicio.';
         break;
-      case '9': {
-        const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
-        statsModule.trackModuleAccess(db, phoneToUse, 'scheduled_messages');
-        response = getScheduledMessagesMenu(phoneToUse, userName);
-        updateSession(phoneToUse, 'scheduled_messages_menu');
-        break;
-      }
       case '10':
       case '0':
         statsModule.trackModuleAccess(db, userPhone, 'help');
