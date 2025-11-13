@@ -6,25 +6,36 @@
 
 ---
 
-## ✅ Estado Actual (v1.0.0)
+## ✅ Estado Actual (v1.2.0)
 
 ### Implementado
 - ✅ **Calendario completo** con Google Calendar, notificaciones, eventos recurrentes
+- ✅ **Recordatorios automáticos** - Notificaciones 24h y 1h antes de eventos
+- ✅ **Mensajes programados** - Envío automático con lenguaje natural y límites anti-spam
+- ✅ **Palabras clave globales** - Acceso rápido a módulos desde cualquier menú
+- ✅ **Detección inteligente de ubicación** - Sugerencia automática con confirmación del usuario
+- ✅ **Sistema de timezone** - Sincronización automática según ubicación del usuario
 - ✅ **Gestión de gastos** con división automática y grupos
 - ✅ **IA básica** con Claude para conversación natural
 - ✅ **Sistema de feedback** para mejoras continuas
+- ✅ **Dashboard de administración** - Métricas de uso, usuarios activos, estadísticas
 
 ---
 
 ## 🗓️ Próximos 12 Meses
 
-### Q1 2025 - Mejoras Core (4-6 semanas)
+### Q1 2025 - Mejoras Core (4-6 semanas) ✅ En Progreso
 **Enfoque:** Optimizar y mejorar funcionalidades existentes
 
-- 📅 Vista semanal, adjuntos, recordatorios por email
-- 💰 Sistema de pagos registrados, múltiples monedas
-- 🤖 IA más integrada con módulos
-- 🔧 Logs, errores, optimización BD
+- ✅ Recordatorios automáticos de calendario (24h y 1h antes)
+- ✅ Mensajes programados con límites anti-spam
+- ✅ Palabras clave globales (shortcuts)
+- ✅ Detección inteligente de ubicación con confirmación
+- ✅ Sistema de timezone sincronizado
+- 📅 Vista semanal, adjuntos, recordatorios por email - Pendiente
+- 💰 Sistema de pagos registrados, múltiples monedas - Pendiente
+- 🤖 IA más integrada con módulos - Pendiente
+- 🔧 Logs, errores, optimización BD - Pendiente
 
 ### Q2 2025 - Nuevas Features (6-8 semanas)
 **Enfoque:** Expandir capacidades del bot
@@ -88,5 +99,5 @@
 
 ---
 
-*Última actualización: Enero 2025*
+*Última actualización: Noviembre 2025*
 

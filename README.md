@@ -60,16 +60,38 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, pronóstico del t
 - ✅ Enviar sugerencias
 - ✅ Panel de administración básico
 
+### 🗓️ Mensajes Programados (Nuevo)
+- ✅ Programar mensajes para enviar en fecha/hora específica
+- ✅ Lenguaje natural: "en 2 minutos", "mañana 10:00", "hoy 11:45 am"
+- ✅ Límites diarios anti-spam con advertencias personalizadas
+- ✅ Listar y cancelar mensajes programados
+- ✅ Sincronización automática con timezone del usuario
+
+### 🔔 Recordatorios Automáticos (Nuevo)
+- ✅ Notificaciones automáticas 24h y 1h antes de eventos
+- ✅ Notificaciones a dueños e invitados
+- ✅ Preferencias por usuario (habilitar/deshabilitar)
+- ✅ Logging completo de recordatorios enviados
+
+### ⌨️ Palabras Clave Globales (Nuevo)
+- ✅ Acceso rápido a módulos desde cualquier menú
+- ✅ Keywords: "pronostico", "gastos", "calendario", "programar mensaje", etc.
+- ✅ Guía amigable de keywords en mensaje de bienvenida
+
+### 📍 Detección Inteligente de Ubicación (Nuevo)
+- ✅ Detección automática por IP con sugerencia al usuario
+- ✅ Confirmación antes de guardar ubicación (previene errores)
+- ✅ Sincronización de timezone desde ubicación detectada
+- ✅ Sugerencia de ubicación cada vez que se accede al módulo de clima
+
 ## 🚧 Próximas Funcionalidades
 
 Consulta el [ROADMAP.md](ROADMAP.md) para ver el plan completo. Algunas funcionalidades en desarrollo:
 
-- 📱 **Programar mensajes de WhatsApp** - Enviar mensajes a contactos en fecha/hora específica
-- 🏫 **Resumen inteligente de Google Classroom** - Conectar tu cuenta y recibir resúmenes de anuncios y tareas
 - 🍎 **Contador de calorías por IA** - Analizar fotos de comida para contar calorías
 - 🏪 **Marketplace de módulos** - Instalar módulos opcionales según necesidades
 - 🔐 **Bóveda de información personal** - Almacenar documentos, pólizas, información sensible
-- 📊 **Panel de administración avanzado** - Métricas de uso, usuarios activos, funciones más utilizadas
+- 📊 **Exportación de métricas** - Descargar estadísticas en CSV/Excel
 
 ## 🚀 Instalación
 
@@ -136,6 +158,11 @@ npm start
 - `recordatorios` - Ver y completar recordatorios (comando rápido)
 - `classroom` o `resumen classroom` - Abrir el módulo de Classroom desde cualquier parte
 - `convertir 100 usd a ars` (o `50 eur a usd`, etc.) - Conversión directa
+- `programar mensaje` - Programar un mensaje para enviar más tarde
+- `mensajes programados` - Ver tus mensajes programados
+- `cancelar mensaje [ID]` - Cancelar un mensaje programado
+- `pronostico` - Ver pronóstico del tiempo (keyword global)
+- `gastos` - Acceder a módulo de gastos (keyword global)
 - `/feedback [mensaje]` - Enviar feedback
 - `/bug [descripción]` - Reportar error
 
@@ -206,6 +233,35 @@ Bot: [Grupo creado]
 Usuario: /gasto 5000 | Carne | Juan
 Usuario: /resumen
 Bot: [Resumen de gastos]
+```
+
+**Programar mensaje:**
+```
+Usuario: programar mensaje
+Bot: Perfecto Gustavo. Decime qué mensaje querés programar.
+Usuario: Recordar llamar a Juan
+Bot: Genial. ¿Cuándo querés que lo envíe?
+Usuario: en 2 minutos
+Bot: ✅ Mensaje programado (ID #1).
+     📅 Se enviará el Jueves 13 de Noviembre 2025 - 11:55.
+```
+
+**Usar palabras clave globales:**
+```
+Usuario: pronostico
+Bot: [Muestra pronóstico del tiempo directamente]
+Usuario: gastos
+Bot: [Abre módulo de gastos directamente]
+```
+
+**Ver mensajes programados:**
+```
+Usuario: mensajes programados
+Bot: 📬 Tus mensajes programados
+     #1 • Jueves 13 de Noviembre 2025 - 11:55
+        Recordar llamar a Juan
+     #2 • Viernes 14 de Noviembre 2025 - 09:00
+        Reunión importante
 ```
 
 ## 📁 Estructura del Proyecto

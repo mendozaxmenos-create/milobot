@@ -1,7 +1,7 @@
 # 🗺️ Hoja de Ruta - Milo Bot
 
-**Versión Actual:** v1.0.0  
-**Última Actualización:** 12 de noviembre de 2025
+**Versión Actual:** v1.2.0  
+**Última Actualización:** 13 de noviembre de 2025
 
 ---
 
@@ -29,6 +29,9 @@
 - ✅ Funciona en grupos de WhatsApp
 - ✅ Resumen de gastos
 - ✅ Agregar participantes (manual y por contacto)
+- ✅ Cuentas bancarias y alias
+- ✅ Registro de pagos realizados
+- ✅ Mostrar alias bancarios en transferencias
 
 #### 🤖 Asistente IA (Básico)
 - ✅ Integración con Claude (Anthropic)
@@ -54,6 +57,42 @@
 - ✅ Timeout de inactividad (5 min)
 - ✅ Manejo de grupos de WhatsApp
 - ✅ Sistema de usuarios
+- ✅ Estadísticas de uso del bot (bot_usage_stats)
+- ✅ Sistema de invitaciones (user_invites)
+
+#### 🏫 Google Classroom (Nuevo)
+- ✅ Integración con OAuth
+- ✅ Sincronización de cursos
+- ✅ Ver tareas pendientes
+- ✅ Ver anuncios
+- ✅ Resumen de actividad por cuenta
+- ✅ Soporte multi-cuentas
+
+#### 🔔 Recordatorios Automáticos (Nuevo)
+- ✅ Notificaciones automáticas 24h y 1h antes de eventos
+- ✅ Notificaciones a dueños e invitados
+- ✅ Preferencias por usuario (habilitar/deshabilitar)
+- ✅ Logging completo de recordatorios enviados
+- ✅ Servicio automático que verifica eventos cada 15 minutos
+
+#### 🗓️ Mensajes Programados (Nuevo)
+- ✅ Programar mensajes para enviar en fecha/hora específica
+- ✅ Lenguaje natural: "en 2 minutos", "mañana 10:00", "hoy 11:45 am"
+- ✅ Límites diarios anti-spam con advertencias personalizadas
+- ✅ Listar y cancelar mensajes programados
+- ✅ Sincronización automática con timezone del usuario
+- ✅ Scheduler automático que envía mensajes en tiempo real
+
+#### ⌨️ Palabras Clave Globales (Nuevo)
+- ✅ Acceso rápido a módulos desde cualquier menú
+- ✅ Keywords: "pronostico", "gastos", "calendario", "programar mensaje", etc.
+- ✅ Guía amigable de keywords en mensaje de bienvenida
+
+#### 📍 Detección Inteligente de Ubicación (Nuevo)
+- ✅ Detección automática por IP con sugerencia al usuario
+- ✅ Confirmación antes de guardar ubicación (previene errores)
+- ✅ Sincronización de timezone desde ubicación detectada
+- ✅ Sugerencia de ubicación cada vez que se accede al módulo de clima
 
 ---
 
@@ -63,45 +102,79 @@
 **Prioridad: Alta | Estimación: 4-6 semanas**
 
 #### 💰 Gastos & Finanzas
-- [ ] **Completar módulo de gastos** (EPIC 1)
-  - Agregar/editar participantes con validaciones
-  - Registro de gastos, resúmenes y división optimizada
-  - Cierre de grupos + sharing en WhatsApp
-- [ ] **Pagos registrados y datos bancarios**
-  - Capturar cuentas bancarias de cada usuario
-  - Marcar pagos como realizados y reflejarlos en los cálculos
+- [x] **Completar módulo de gastos** (EPIC 1)
+  - ✅ Agregar/editar participantes con validaciones
+  - ✅ Registro de gastos, resúmenes y división optimizada
+  - ✅ Funciona en grupos de WhatsApp
+  - ⏳ Cierre de grupos + sharing en WhatsApp - Pendiente
+- [x] **Pagos registrados y datos bancarios**
+  - ✅ Capturar cuentas bancarias de cada usuario (alias)
+  - ✅ Marcar pagos como realizados y reflejarlos en los cálculos
+  - ✅ Mostrar alias bancarios en todas las transferencias
 
 #### 📅 Calendario & Recordatorios
 - [ ] **Gestión completa de agenda**
   - Editar/eliminar eventos, vistas semanal/mensual y búsqueda avanzada
-  - Enviar invitaciones individuales y agenda “Hoy” desde comando
-- [ ] **Recordatorios automáticos**
-  - Jobs cada 15 minutos, avisos 1h antes y al inicio
-  - Recordatorios recurrentes y personalización por tipo
-- [ ] **Envíos programados de WhatsApp**
-  - Programación única, listados y mensajes recurrentes
+  - Enviar invitaciones individuales y agenda "Hoy" desde comando
+- [x] **Recordatorios automáticos** ✅
+  - ✅ Jobs cada 15 minutos, avisos 24h y 1h antes del evento
+  - ✅ Notificaciones a dueños e invitados
+  - ✅ Preferencias por usuario (habilitar/deshabilitar)
+  - ✅ Logging completo de recordatorios enviados
+  - ⏳ Recordatorios recurrentes y personalización por tipo - Pendiente
+- [x] **Envíos programados de WhatsApp** ✅
+  - ✅ Programación única con lenguaje natural
+  - ✅ Listados y cancelación de mensajes programados
+  - ✅ Límites diarios anti-spam con advertencias personalizadas
+  - ✅ Sincronización de timezone del usuario
+  - ✅ Scheduler automático que envía mensajes en tiempo real
+  - ⏳ Mensajes recurrentes - Pendiente
+- [ ] **Interpretación de imágenes para eventos** *(Nuevo)*
+  - Subir imagen en el módulo de eventos y que el bot la interprete
+  - Extraer fecha, hora y descripción de la imagen usando IA (Claude Vision)
+  - Mostrar datos extraídos para confirmación previa
+  - Permitir modificación de fecha, hora y descripción antes de confirmar
+  - Agregar evento al calendario después de confirmación
 
 #### 🌤️ Clima & Monedas
-- [ ] **Clima diario con ubicación inteligente**
-  - Detección por IP/GPS y pronóstico extendido
-  - Alertas si llueve o si cambia drásticamente la temperatura
+- [x] **Clima diario con ubicación inteligente** ✅
+  - ✅ Detección automática por IP con sugerencia al usuario
+  - ✅ Confirmación antes de guardar ubicación (previene errores)
+  - ✅ Sincronización de timezone desde ubicación detectada
+  - ✅ Sugerencia de ubicación cada vez que se accede al módulo
+  - ⏳ Pronóstico extendido (7 días) - Pendiente
+  - ⏳ Alertas si llueve o si cambia drásticamente la temperatura - Pendiente
 - [ ] **Conversor de monedas avanzado**
   - Historial de tasas, configuración de moneda base y destinos preferidos
 
 #### 🤖 IA y Automatización
+- [x] **Palabras clave globales (shortcuts)** ✅
+  - ✅ Acceso rápido a módulos desde cualquier menú
+  - ✅ Keywords: "pronostico", "gastos", "calendario", "programar mensaje", etc.
+  - ✅ Guía amigable de keywords en mensaje de bienvenida
 - [ ] **Integración profunda con módulos existentes**
   - Crear eventos y gastos vía IA, comandos de voz frecuentes
-- [ ] **Recap semanal automático**
-  - Enviar listado de novedades solo si hubo cambios
+- [x] **Recap semanal automático**
+  - ✅ Enviar listado de novedades solo si hubo cambios
+  - ✅ Resumen de actividad semanal (eventos, gastos, grupos)
+  - ✅ Mensajes motivadores con tips aleatorios
+  - ✅ Detección de cambios mediante hash de actividad
+  - ⏳ Configuración por usuario (habilitar/deshabilitar recaps) - Pendiente
 
 #### 🔧 Infraestructura
+- [x] **Sistema de timezone** ✅
+  - ✅ Detección y almacenamiento de timezone por usuario
+  - ✅ Conversión automática de fechas/horas según ubicación
+  - ✅ Sincronización en mensajes programados y recordatorios
 - [ ] **Logs y manejo de errores**
   - Logs estructurados, rotación y alertas para fallas críticas
 - [ ] **Optimización de base de datos**
   - Índices claves, consultas optimizadas y backups diarios
-- [ ] **Panel de administración (versión inicial)**
-  - Dashboard web accesible con métricas clave (MAU, retención, funciones usadas)
-  - Exportación básica (CSV/Excel) de métricas visibles
+- [x] **Panel de administración (versión inicial)** ✅
+  - ✅ Dashboard web accesible con métricas clave (MAU, retención, funciones usadas)
+  - ✅ Estadísticas de uso del bot (bot_usage_stats)
+  - ✅ Usuarios activos y eventos por tipo
+  - ⏳ Exportación básica (CSV/Excel) de métricas visibles - Pendiente
 
 ---
 
@@ -109,9 +182,12 @@
 **Prioridad: Media-Alta | Estimación: 6-8 semanas**
 
 #### 📚 Integraciones educativas & productividad
-- [ ] **Google Classroom + multi-hijos**
-  - OAuth, caché de cursos y comandos (`/hoy`, `/semana`, pendientes por hijo)
-  - Notificaciones automáticas cuando llega contenido nuevo
+- [x] **Google Classroom + multi-hijos**
+  - ✅ OAuth implementado
+  - ✅ Caché de cursos y comandos (`/hoy`, `/semana`, pendientes por hijo)
+  - ✅ Sincronización de cursos, anuncios y tareas
+  - ⏳ Notificaciones automáticas cuando llega contenido nuevo - Pendiente
+  - ⏳ Soporte multi-hijos completo - Pendiente
 - [ ] **Google Calendar bidireccional**
   - Conectar cuentas, sincronizar bot→Google y Google→bot
   - Comando rápido “Agenda para hoy” y gestión de conflictos
@@ -128,10 +204,14 @@
   - Generar links/códigos de referencia para monetizar compras
 
 #### 🎭 Entretenimiento y cultura
-- [ ] **Cartelera de espectáculos**
+- [ ] **Cartelera de películas y espectáculos**
   - Definir complejos, ciudades y categorías favoritas
   - Consultar grillas de cine/teatro/conciertos y enviar recordatorios
   - Integrar con calendario para agendar funciones seleccionadas
+  - Buscar películas en cartelera por nombre, género o fecha
+  - Mostrar horarios, salas y disponibilidad de entradas
+  - Recordatorios de estrenos y funciones próximas
+  - Recomendaciones personalizadas basadas en preferencias del usuario
 
 #### 💰 Finanzas personales
 - [ ] **Presupuestos y categorías de gastos**
@@ -391,7 +471,7 @@
 
 ---
 
-**Última revisión:** 11 de noviembre de 2025  
+**Última revisión:** 13 de noviembre de 2025  
 **Próxima revisión:** Diciembre 2025
 
 ---
