@@ -38,6 +38,7 @@
 - ✅ Procesamiento de lenguaje natural
 - ✅ Conversación contextual
 - ✅ Detección de intenciones (calendario/gastos)
+- ⏳ Generación de imágenes por IA (pendiente)
 
 #### 💱 Conversor de Monedas (Nuevo)
 - ✅ Conversión directa con comandos naturales (`convertir 150 usd a ars`)
@@ -154,6 +155,12 @@
   - ✅ Guía amigable de keywords en mensaje de bienvenida
 - [ ] **Integración profunda con módulos existentes**
   - Crear eventos y gastos vía IA, comandos de voz frecuentes
+- [ ] **Generación de imágenes por IA** ⏳
+  - Integración con DALL-E (OpenAI) o Stable Diffusion API
+  - Comandos desde el módulo de IA: "crea una imagen de...", "genera un logo de..."
+  - Envío de imágenes generadas directamente por WhatsApp
+  - Límites de uso según plan (Free/Premium)
+  - Historial de imágenes generadas
 - [x] **Recap semanal automático**
   - ✅ Enviar listado de novedades solo si hubo cambios
   - ✅ Resumen de actividad semanal (eventos, gastos, grupos)

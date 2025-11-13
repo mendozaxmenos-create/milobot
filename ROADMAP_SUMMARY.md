@@ -35,6 +35,7 @@
 - 📅 Vista semanal, adjuntos, recordatorios por email - Pendiente
 - 💰 Sistema de pagos registrados, múltiples monedas - Pendiente
 - 🤖 IA más integrada con módulos - Pendiente
+- 🎨 Generación de imágenes por IA - Pendiente
 - 🔧 Logs, errores, optimización BD - Pendiente
 - 🌐 Acceso remoto al dashboard - Pendiente
 - ☁️ Hosting y despliegue en la nube - Pendiente
@@ -87,6 +88,7 @@
 
 ## 💡 Ideas de Alto Impacto
 
+- 🎨 **Generación de imágenes por IA** - Crear imágenes desde texto usando DALL-E o Stable Diffusion
 - 🎂 Recordatorios de cumpleaños automáticos
 - ✈️ Asistente de viajes con división de gastos
 - ✅ Gestión de tareas (To-Do) integrada

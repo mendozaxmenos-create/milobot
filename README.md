@@ -98,6 +98,7 @@ Bot inteligente de WhatsApp con funcionalidades de calendario, pronóstico del t
 
 Consulta el [ROADMAP.md](ROADMAP.md) para ver el plan completo. Algunas funcionalidades en desarrollo:
 
+- 🎨 **Generación de imágenes por IA** - Crear imágenes desde texto usando DALL-E o Stable Diffusion
 - 🍎 **Contador de calorías por IA** - Analizar fotos de comida para contar calorías
 - 🏪 **Marketplace de módulos** - Instalar módulos opcionales según necesidades
 - 🔐 **Bóveda de información personal** - Almacenar documentos, pólizas, información sensible
