@@ -175,6 +175,15 @@
   - ✅ Estadísticas de uso del bot (bot_usage_stats)
   - ✅ Usuarios activos y eventos por tipo
   - ⏳ Exportación básica (CSV/Excel) de métricas visibles - Pendiente
+  - ⏳ Acceso remoto al dashboard (no solo localhost) - Pendiente
+  - ⏳ Autenticación y seguridad para acceso remoto - Pendiente
+  - ⏳ Gestión de usuarios: cambiar nivel (Free/Premium) desde el dashboard - Pendiente
+- [ ] **Hosting y despliegue en la nube**
+  - Configuración para servicios como Railway, Render, Fly.io, DigitalOcean
+  - Variables de entorno y configuración de producción
+  - Monitoreo y logs en la nube
+  - Backup automático de base de datos
+  - Escalabilidad horizontal (múltiples instancias)
 
 ---
 
@@ -260,6 +269,9 @@
 - [ ] **Sistema de suscripciones**
   - Planes (Básico / Premium / Pro) con Stripe o MercadoPago
   - Controles de acceso (`is_premium`) y checkout in-app
+  - ⏳ Links de pago para plan mensual y anual - Pendiente
+  - ⏳ Integración con pasarelas de pago (MercadoPago/Stripe) - Pendiente
+  - ⏳ Webhook para confirmar pagos y activar Premium automáticamente - Pendiente
 - [ ] **Catálogo de beneficios premium vs all-access**
   - Definir features exclusivas y cuáles pasan a “all access” por referidos
 - [ ] **Portfolio financiero avanzado**

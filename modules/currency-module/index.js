@@ -643,6 +643,26 @@ async function handleCurrencyMessage(db, userPhone, userName, messageText, sessi
     try {
       const results = await handleMultiConversion(parsed.amount, parsed.from, parsed.targets);
       const message = buildMultiConversionMessage(parsed.amount, parsed.from, results, null);
+      
+      // Trackear conversión de moneda (si el módulo de stats está disponible)
+      try {
+        const statsModule = require('../../modules/stats-module');
+        results.forEach(({ target, conversion }) => {
+          if (conversion && conversion.result !== null && conversion.rate !== null) {
+            statsModule.trackCurrencyConversion(db, userPhone, {
+              from: parsed.from,
+              to: target,
+              amount: parsed.amount,
+              result: conversion.result,
+              rate: conversion.rate,
+              targetCount: parsed.targets.length
+            });
+          }
+        });
+      } catch (error) {
+        console.warn('[WARN] No se pudo trackear conversión de moneda:', error.message);
+      }
+      
       return {
         message,
         context: session?.context || null
@@ -669,6 +689,25 @@ async function handleCurrencyMessage(db, userPhone, userName, messageText, sessi
     try {
       const results = await handleMultiConversion(amount, localCurrency, targets);
       const message = buildMultiConversionMessage(amount, localCurrency, results, stageContext.localLabel);
+
+      // Trackear conversión de moneda (si el módulo de stats está disponible)
+      try {
+        const statsModule = require('../../modules/stats-module');
+        results.forEach(({ target, conversion }) => {
+          if (conversion && conversion.result !== null && conversion.rate !== null) {
+            statsModule.trackCurrencyConversion(db, userPhone, {
+              from: localCurrency,
+              to: target,
+              amount: amount,
+              result: conversion.result,
+              rate: conversion.rate,
+              targetCount: targets.length
+            });
+          }
+        });
+      } catch (error) {
+        console.warn('[WARN] No se pudo trackear conversión de moneda:', error.message);
+      }
 
       return {
         message,

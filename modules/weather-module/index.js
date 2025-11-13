@@ -5,10 +5,22 @@
 const weatherAPI = require('./weather-api');
 const database = require('./database');
 
+const ENABLE_IP_AUTO_LOCATION = process.env.ENABLE_IP_AUTO_LOCATION !== 'false';
+
 /**
  * Obtener pronóstico del tiempo para el usuario
  */
-async function getWeatherForecast(db, userPhone, userName, autoDetect = false) {
+async function getWeatherForecast(db, userPhone, userName, options = {}) {
+  let finalOptions = {};
+  if (typeof options === 'boolean') {
+    finalOptions = { autoDetect: options };
+  } else if (options && typeof options === 'object') {
+    finalOptions = { ...options };
+  }
+
+  const autoDetect = !!finalOptions.autoDetect;
+  const forceIpSuggestion = ENABLE_IP_AUTO_LOCATION && !!finalOptions.forceIpSuggestion;
+
   try {
     // Obtener ubicación del usuario
     const storedLocation = database.getUserLocation(db, userPhone);
@@ -20,7 +32,7 @@ async function getWeatherForecast(db, userPhone, userName, autoDetect = false) {
     
     if (!userLocation || !userLocation.city) {
       // Si se solicita detección automática
-      if (autoDetect) {
+      if (autoDetect && ENABLE_IP_AUTO_LOCATION) {
         try {
           console.log('[DEBUG] Iniciando detección automática de ubicación...');
           const weatherAPI = require('./weather-api');
@@ -46,6 +58,21 @@ async function getWeatherForecast(db, userPhone, userName, autoDetect = false) {
                 ? `\n\n❗ Si no estás en *${locationLabel}*, escribí tu ciudad (por ejemplo: Santiago, Chile) para actualizarla.`
                 : '';
               const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
+              
+              // Trackear consulta de clima (si el módulo de stats está disponible)
+              try {
+                const statsModule = require('../../modules/stats-module');
+                statsModule.trackWeatherQuery(db, userPhone, {
+                  city: ipLocation.data.city,
+                  country: forecast.data.country || null,
+                  temperature: forecast.data.temperature || null,
+                  condition: forecast.data.condition || null,
+                  hasLocation: true,
+                  detectionMethod: 'ip'
+                });
+              } catch (error) {
+                console.warn('[WARN] No se pudo trackear consulta de clima:', error.message);
+              }
               
               return {
                 message: `${forecastMessage}${mismatchNote}
@@ -119,12 +146,71 @@ async function getWeatherForecast(db, userPhone, userName, autoDetect = false) {
       };
     }
     
+    // Trackear consulta de clima (si el módulo de stats está disponible)
+    try {
+      const statsModule = require('../../modules/stats-module');
+      statsModule.trackWeatherQuery(db, userPhone, {
+        city: userLocation.city,
+        country: forecast.data.country || null,
+        temperature: forecast.data.temperature || null,
+        condition: forecast.data.condition || null,
+        hasLocation: !!(userLocation.lat && userLocation.lon)
+      });
+    } catch (error) {
+      console.warn('[WARN] No se pudo trackear consulta de clima:', error.message);
+    }
+    
     // Generar mensaje con recomendaciones
     const locationLabel = buildLocationLabel(userLocation.city, forecast.data.country);
     const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
     
+    let suggestionBlock = '';
+    let pendingLocation = null;
+
+    if (forceIpSuggestion) {
+      try {
+        const ipLocation = await weatherAPI.getLocationByIP();
+        if (ipLocation.success && ipLocation.data) {
+          const detectedCity = ipLocation.data.city || '';
+          const detectedCountry = ipLocation.data.country || '';
+          const detectedLabel = buildLocationLabel(detectedCity, detectedCountry);
+
+          const storedCityNormalized = (userLocation.city || '').trim().toLowerCase();
+          const detectedCityNormalized = detectedCity.trim().toLowerCase();
+          const sameCity = storedCityNormalized && detectedCityNormalized
+            ? storedCityNormalized === detectedCityNormalized
+            : false;
+
+          if (detectedLabel && !sameCity) {
+            pendingLocation = {
+              city: detectedLabel,
+              rawCity: detectedCity || detectedLabel,
+              lat: ipLocation.data.lat,
+              lon: ipLocation.data.lon,
+              state: ipLocation.data.region || ipLocation.data.state || null,
+              country: detectedCountry || null,
+              countryCode: ipLocation.data.countryCode || null,
+              detectedAt: new Date().toISOString(),
+              detectionMethod: 'ip_auto_suggest'
+            };
+
+            suggestionBlock =
+              `\n\n📍 *¿Querés actualizar la ubicación a ${detectedLabel}?*\n` +
+              `1️⃣ Sí, guardala\n` +
+              `2️⃣ No, mantener ${userLocation.city || 'la actual'}\n\n` +
+              `💡 Podés cambiarla en cualquier momento escribiendo el nombre de tu ciudad.`;
+          }
+        }
+      } catch (error) {
+        console.warn('[WARN] No se pudo obtener sugerencia de ubicación automática:', error.message);
+      }
+    }
+
+    const menuBlock = pendingLocation ? '' : buildWeatherMenu(locationLabel);
+    
     return {
-      message: `${forecastMessage}${buildWeatherMenu(locationLabel)}`
+      message: `${forecastMessage}${suggestionBlock}${menuBlock}`,
+      ...(pendingLocation ? { pendingLocation } : {})
     };
     
   } catch (error) {

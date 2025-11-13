@@ -3,6 +3,10 @@
 // ============================================
 
 let hasDueDateChecked = false;
+let hasReminderAttemptsChecked = false;
+let hasReminderStatusChecked = false;
+let hasReminderLogChecked = false;
+let hasUserReminderPrefChecked = false;
 
 function ensureHasDueDateColumn(db) {
   if (!db || hasDueDateChecked) {
@@ -24,8 +28,107 @@ function ensureHasDueDateColumn(db) {
   }
 }
 
+function ensureReminderAttemptsColumn(db) {
+  if (!db || hasReminderAttemptsChecked) {
+    return;
+  }
+
+  try {
+    const columns = db.prepare(`PRAGMA table_info(calendar_events)`).all();
+    const exists = columns.some(col => col.name === 'reminder_attempts');
+
+    if (!exists) {
+      db.exec(`ALTER TABLE calendar_events ADD COLUMN reminder_attempts INTEGER DEFAULT 0`);
+      console.log('✅ Columna reminder_attempts agregada automáticamente a calendar_events');
+    }
+
+    hasReminderAttemptsChecked = true;
+  } catch (error) {
+    console.error('❌ No se pudo verificar/agregar columna reminder_attempts:', error.message);
+  }
+}
+
+function ensureReminderStatusColumns(db) {
+  if (!db || hasReminderStatusChecked) {
+    return;
+  }
+
+  try {
+    const columns = db.prepare(`PRAGMA table_info(calendar_events)`).all();
+    const has24 = columns.some(col => col.name === 'reminder_24h_sent');
+    const has1 = columns.some(col => col.name === 'reminder_1h_sent');
+    const hasLast = columns.some(col => col.name === 'last_reminder_at');
+
+    if (!has24) {
+      db.exec(`ALTER TABLE calendar_events ADD COLUMN reminder_24h_sent INTEGER DEFAULT 0`);
+      console.log('✅ Columna reminder_24h_sent agregada automáticamente a calendar_events');
+    }
+
+    if (!has1) {
+      db.exec(`ALTER TABLE calendar_events ADD COLUMN reminder_1h_sent INTEGER DEFAULT 0`);
+      console.log('✅ Columna reminder_1h_sent agregada automáticamente a calendar_events');
+    }
+
+    if (!hasLast) {
+      db.exec(`ALTER TABLE calendar_events ADD COLUMN last_reminder_at DATETIME`);
+      console.log('✅ Columna last_reminder_at agregada automáticamente a calendar_events');
+    }
+
+    hasReminderStatusChecked = true;
+  } catch (error) {
+    console.error('❌ No se pudo verificar/agregar columnas de recordatorios:', error.message);
+  }
+}
+
+function ensureReminderLogTable(db) {
+  if (!db || hasReminderLogChecked) {
+    return;
+  }
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS calendar_reminders_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id INTEGER NOT NULL,
+        recipient_phone TEXT NOT NULL,
+        reminder_type TEXT NOT NULL,
+        sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        status TEXT DEFAULT 'sent',
+        error_message TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (event_id) REFERENCES calendar_events(id) ON DELETE CASCADE
+      )
+    `);
+    hasReminderLogChecked = true;
+  } catch (error) {
+    console.error('❌ No se pudo crear/verificar calendar_reminders_log:', error.message);
+  }
+}
+
+function ensureUserReminderPreferenceColumn(db) {
+  if (!db || hasUserReminderPrefChecked) {
+    return;
+  }
+
+  try {
+    const columns = db.prepare(`PRAGMA table_info(users)`).all();
+    const exists = columns.some(col => col.name === 'calendar_reminders_enabled');
+    if (!exists) {
+      db.exec(`ALTER TABLE users ADD COLUMN calendar_reminders_enabled INTEGER DEFAULT 1`);
+      console.log('✅ Columna calendar_reminders_enabled agregada automáticamente a users');
+    }
+    hasUserReminderPrefChecked = true;
+  } catch (error) {
+    console.error('❌ No se pudo agregar columna calendar_reminders_enabled:', error.message);
+  }
+}
+
 function ensureSchemaCompatibility(db) {
   ensureHasDueDateColumn(db);
+  ensureReminderAttemptsColumn(db);
+  ensureReminderStatusColumns(db);
+  ensureReminderLogTable(db);
+  ensureUserReminderPreferenceColumn(db);
 }
 
 /**
@@ -56,6 +159,22 @@ function addEvent(db, userPhone, eventData) {
     eventData.is_reminder || 0,
     eventData.has_due_date === undefined ? 1 : eventData.has_due_date
   );
+  
+  // Trackear evento creado (si el módulo de stats está disponible)
+  try {
+    const statsModule = require('../../modules/stats-module');
+    statsModule.trackEventCreated(db, userPhone, {
+      eventId: result.lastInsertRowid,
+      title: eventData.title,
+      category: eventData.category || 'personal',
+      isReminder: eventData.is_reminder || 0,
+      isRecurring: eventData.is_recurring || 0,
+      hasGoogleSync: !!eventData.google_event_id
+    });
+  } catch (error) {
+    // Si el módulo de stats no está disponible, continuar sin tracking
+    console.warn('[WARN] No se pudo trackear evento creado:', error.message);
+  }
   
   return { success: true, id: result.lastInsertRowid };
 }
@@ -177,6 +296,7 @@ function getEventById(db, eventId, userPhone) {
 function updateEvent(db, eventId, userPhone, updates) {
   const fields = [];
   const values = [];
+  const shouldResetReminders = updates.event_date !== undefined;
   
   if (updates.title !== undefined) {
     fields.push('title = ?');
@@ -212,6 +332,14 @@ function updateEvent(db, eventId, userPhone, updates) {
   `);
   
   const result = stmt.run(...values);
+
+  if (result.changes > 0 && shouldResetReminders) {
+    try {
+      resetReminderFlags(db, eventId);
+    } catch (error) {
+      console.warn(`⚠️ No se pudieron reiniciar los recordatorios para el evento ${eventId}:`, error.message);
+    }
+  }
   
   return {
     success: result.changes > 0,
@@ -513,6 +641,78 @@ function updateGoogleLastSync(db, userPhone, timestamp = Date.now()) {
   stmt.run(timestamp, userPhone);
 }
 
+function getUpcomingReminderEvents(db, maxMinutesAhead = 1560) {
+  ensureHasDueDateColumn(db);
+  ensureReminderStatusColumns(db);
+  ensureUserReminderPreferenceColumn(db);
+
+  const stmt = db.prepare(`
+    SELECT e.*,
+           u.name as user_name,
+           IFNULL(u.calendar_reminders_enabled, 1) as calendar_reminders_enabled
+    FROM calendar_events e
+    JOIN users u ON e.user_phone = u.phone
+    WHERE e.has_due_date = 1
+      AND e.is_reminder = 0
+      AND datetime(e.event_date, 'localtime') > datetime('now', 'localtime')
+      AND datetime(e.event_date, 'localtime') <= datetime('now', '+' || ? || ' minutes', 'localtime')
+  `);
+
+  const events = stmt.all(maxMinutesAhead);
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
+}
+
+function markReminderSentFlag(db, eventId, reminderType) {
+  ensureReminderStatusColumns(db);
+
+  const column = reminderType === '24h'
+    ? 'reminder_24h_sent'
+    : reminderType === '1h'
+      ? 'reminder_1h_sent'
+      : null;
+
+  if (!column) {
+    return;
+  }
+
+  const stmt = db.prepare(`
+    UPDATE calendar_events
+    SET ${column} = 1,
+        last_reminder_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `);
+
+  stmt.run(eventId);
+}
+
+function resetReminderFlags(db, eventId) {
+  ensureReminderStatusColumns(db);
+
+  const stmt = db.prepare(`
+    UPDATE calendar_events
+    SET reminder_24h_sent = 0,
+        reminder_1h_sent = 0,
+        last_reminder_at = NULL
+    WHERE id = ?
+  `);
+
+  stmt.run(eventId);
+}
+
+function insertReminderLog(db, eventId, recipientPhone, reminderType, status = 'sent', errorMessage = null) {
+  ensureReminderLogTable(db);
+
+  const stmt = db.prepare(`
+    INSERT INTO calendar_reminders_log (event_id, recipient_phone, reminder_type, status, error_message)
+    VALUES (?, ?, ?, ?, ?)
+  `);
+
+  stmt.run(eventId, recipientPhone, reminderType, status, errorMessage || null);
+}
+
 module.exports = {
   addEvent,
   getTodayEvents,
@@ -538,5 +738,9 @@ module.exports = {
   deleteEventInvitee,
   getReminders,
   getTodayReminders,
+  getUpcomingReminderEvents,
+  markReminderSentFlag,
+  resetReminderFlags,
+  insertReminderLog,
   ensureSchemaCompatibility
 };

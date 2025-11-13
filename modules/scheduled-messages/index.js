@@ -1,0 +1,574 @@
+const calendarUtils = require('../calendar-module/utils');
+
+const DAILY_LIMIT = Math.max(parseInt(process.env.SCHEDULED_MESSAGES_DAILY_LIMIT || '3', 10), 0);
+const MAX_LIST_ITEMS = Math.max(parseInt(process.env.SCHEDULED_MESSAGES_LIST_LIMIT || '5', 10), 1);
+
+function getServerOffsetMinutes() {
+  return -new Date().getTimezoneOffset();
+}
+
+function getUserTimezoneInfo(db, userPhone) {
+  const row = db.prepare(`
+    SELECT timezone_name, timezone_offset_minutes
+    FROM users
+    WHERE phone = ?
+  `).get(userPhone);
+
+  const serverOffset = getServerOffsetMinutes();
+  const offsetMinutes = (row && row.timezone_offset_minutes !== null && row.timezone_offset_minutes !== undefined)
+    ? Number(row.timezone_offset_minutes)
+    : serverOffset;
+
+  return {
+    name: row?.timezone_name || null,
+    offsetMinutes
+  };
+}
+
+function normalizeName(name) {
+  if (!name) {
+    return 'che';
+  }
+  const trimmed = name.trim();
+  if (!trimmed) {
+    return 'che';
+  }
+  return trimmed.split(' ')[0];
+}
+
+function isPremiumUser(db, userPhone) {
+  try {
+    const premiumModule = require('../premium-module');
+    return premiumModule.isPremiumUser(db, userPhone);
+  } catch (error) {
+    // Fallback si el módulo premium no está disponible
+    const user = db.prepare('SELECT is_premium FROM users WHERE phone = ?').get(userPhone);
+    return user && user.is_premium === 1;
+  }
+}
+
+function getPremiumLimit() {
+  try {
+    const premiumModule = require('../premium-module');
+    return premiumModule.PREMIUM_LIMIT;
+  } catch (error) {
+    // Fallback si el módulo premium no está disponible
+    return Math.max(parseInt(process.env.SCHEDULED_MESSAGES_PREMIUM_LIMIT || '20', 10), DAILY_LIMIT);
+  }
+}
+
+function buildLimitWarning(userName, isPremium = false) {
+  const friendly = normalizeName(userName);
+  
+  if (isPremium) {
+    return `⚠️ Alcanzaste el límite de mensajes programados para usuarios Premium.\n\nSi necesitás más, contactanos.`;
+  }
+  
+  return `⚠️ Alcanzaste el límite de mensajes programados (${DAILY_LIMIT} por día).
+
+💎 Para ampliar tu límite, necesitás la versión *Premium*.`;
+}
+
+function getPendingCount(db, creatorPhone) {
+  const stmt = db.prepare(`
+    SELECT COUNT(*) AS count
+    FROM scheduled_messages
+    WHERE creator_phone = ?
+      AND status = 'pending'
+  `);
+  const result = stmt.get(creatorPhone);
+  return result ? Number(result.count) : 0;
+}
+
+function checkDailyLimit(db, creatorPhone) {
+  const isPremium = isPremiumUser(db, creatorPhone);
+  const limit = isPremium ? getPremiumLimit() : DAILY_LIMIT;
+  
+  if (limit === 0) {
+    return { allowed: true, remaining: Infinity, limit: 0, isPremium };
+  }
+  
+  const count = getPendingCount(db, creatorPhone);
+  const remaining = Math.max(limit - count, 0);
+  
+  return {
+    allowed: count < limit,
+    remaining,
+    limit,
+    current: count,
+    isPremium
+  };
+}
+
+function startSchedulingFlow(db, creatorPhone, userName) {
+  const limit = checkDailyLimit(db, creatorPhone);
+  if (!limit.allowed) {
+    return {
+      abort: true,
+      message: buildLimitWarning(userName, limit.isPremium)
+    };
+  }
+
+  const context = {
+    stage: 'collect_text',
+    creatorPhone,
+    targetChat: creatorPhone,
+    targetType: 'user'
+  };
+
+  // Construir mensaje con contador
+  let message = `Perfecto *${userName}*. Decime qué mensaje querés programar.\n\n`;
+  
+  // Mostrar contador de mensajes programados
+  message += `📊 *Mensajes programados:* ${limit.current}/${limit.limit}`;
+  if (limit.isPremium) {
+    message += ` 💎`;
+  }
+  message += `\n`;
+  
+  if (limit.remaining > 0) {
+    message += `✅ Te quedan ${limit.remaining} mensaje${limit.remaining === 1 ? '' : 's'} disponible${limit.remaining === 1 ? '' : 's'}`;
+  } else {
+    message += `⚠️ Límite alcanzado`;
+  }
+  
+  message += `\n\nEscribí *cancelar* si querés salir.`;
+
+  return {
+    abort: false,
+    message,
+    nextModule: 'scheduled_message_collect_text',
+    context: JSON.stringify(context)
+  };
+}
+
+function parseDateTimeInput(inputText) {
+  if (!inputText) {
+    return null;
+  }
+
+  const text = inputText.trim();
+  if (!text) {
+    return null;
+  }
+
+  const relativeMatch = text.match(/^(?:en|dentro de)\s+(\d+)\s+(minutos|minuto|horas|hora|d[ií]as|d[ií]a)(?:\s+.*)?$/i);
+  if (relativeMatch) {
+    const amount = Number(relativeMatch[1]);
+    if (!Number.isNaN(amount) && amount > 0) {
+      const unit = relativeMatch[2].toLowerCase();
+      let minutesToAdd = amount;
+      if (unit.startsWith('hora')) {
+        minutesToAdd = amount * 60;
+      } else if (unit.startsWith('d')) {
+        minutesToAdd = amount * 1440;
+      }
+      return { date: new Date(Date.now() + minutesToAdd * 60000), isRelative: true };
+    }
+  }
+
+  let timePart = null;
+  let datePart = text;
+
+  const timeRegex = /(\d{1,2}:\d{2}\s*(?:am|pm|a\.m\.|p\.m\.|a|p)?)/i;
+  const explicitTime = text.match(timeRegex);
+  if (explicitTime) {
+    timePart = calendarUtils.parseTime(explicitTime[1]);
+    datePart = text.replace(explicitTime[0], '').trim();
+  }
+
+  if (!timePart) {
+    const altTimeRegex = /(\d{1,2})\s*(hs|h)$/i;
+    const altTime = text.match(altTimeRegex);
+    if (altTime) {
+      timePart = calendarUtils.parseTime(altTime[1]);
+      datePart = text.replace(altTime[0], '').trim();
+    }
+  }
+
+  if (!timePart) {
+    timePart = calendarUtils.parseTime(text);
+    if (timePart) {
+      datePart = 'hoy';
+    }
+  }
+
+  if (!timePart) {
+    return null;
+  }
+
+  if (!datePart) {
+    datePart = 'hoy';
+  }
+
+  datePart = datePart.replace(/\b(a las|a la|a)\b/gi, ' ').trim();
+  if (!datePart) {
+    datePart = 'hoy';
+  }
+
+  const parsedDate = calendarUtils.parseNaturalDate(datePart);
+  if (!parsedDate) {
+    return null;
+  }
+
+  const combined = calendarUtils.combineDateAndTime(parsedDate, timePart);
+  if (!combined) {
+    return null;
+  }
+
+  return { date: new Date(combined.replace(' ', 'T')), isRelative: false };
+}
+
+function formatDateTimeForSQLite(date) {
+  // Formatear en timezone local del servidor para que coincida con datetime('now', 'localtime') de SQLite
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  const second = String(date.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+function createScheduledMessage(db, { creatorPhone, targetChat, targetType, messageBody, sendAt, timezoneOffsetMinutes }) {
+  const stmt = db.prepare(`
+    INSERT INTO scheduled_messages (
+      creator_phone,
+      target_chat,
+      target_type,
+      message_body,
+      send_at,
+      timezone_offset,
+      status
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+  `);
+
+  const offset = timezoneOffsetMinutes ?? getServerOffsetMinutes();
+
+  const result = stmt.run(
+    creatorPhone,
+    targetChat,
+    targetType,
+    messageBody,
+    sendAt,
+    offset
+  );
+
+  return result.lastInsertRowid;
+}
+
+function listScheduledMessages(db, creatorPhone, limit = MAX_LIST_ITEMS) {
+  const stmt = db.prepare(`
+    SELECT id, message_body, send_at, status
+    FROM scheduled_messages
+    WHERE creator_phone = ?
+      AND status = 'pending'
+    ORDER BY datetime(send_at) ASC
+    LIMIT ?
+  `);
+
+  return stmt.all(creatorPhone, limit);
+}
+
+function cancelScheduledMessage(db, creatorPhone, messageId) {
+  const stmt = db.prepare(`
+    UPDATE scheduled_messages
+    SET status = 'cancelled',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+      AND creator_phone = ?
+      AND status = 'pending'
+  `);
+
+  const result = stmt.run(messageId, creatorPhone);
+  return result.changes > 0;
+}
+
+function cancelAllScheduledMessages(db, creatorPhone) {
+  const stmt = db.prepare(`
+    UPDATE scheduled_messages
+    SET status = 'cancelled',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE creator_phone = ?
+      AND status = 'pending'
+  `);
+
+  const result = stmt.run(creatorPhone);
+  return result.changes;
+}
+
+function cancelMultipleScheduledMessages(db, creatorPhone, messageIds) {
+  if (!messageIds || messageIds.length === 0) {
+    return { cancelled: 0, failed: 0 };
+  }
+
+  const placeholders = messageIds.map(() => '?').join(',');
+  const stmt = db.prepare(`
+    UPDATE scheduled_messages
+    SET status = 'cancelled',
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id IN (${placeholders})
+      AND creator_phone = ?
+      AND status = 'pending'
+  `);
+
+  const result = stmt.run(...messageIds, creatorPhone);
+  const cancelled = result.changes;
+  const failed = messageIds.length - cancelled;
+
+  return { cancelled, failed };
+}
+
+async function handleFlowMessage({ db, userPhone, userName, messageText, session }) {
+  const context = session?.context ? JSON.parse(session.context) : {};
+  const stage = context.stage || 'collect_text';
+  const lower = (messageText || '').trim().toLowerCase();
+
+  if (lower === 'cancelar' || lower === 'salir') {
+    return {
+      message: '👌 Mensaje programado cancelado. Volvemos al menú principal.',
+      nextModule: 'main',
+      context: null
+    };
+  }
+
+  if (stage === 'collect_text') {
+    const messageBody = messageText && messageText.trim();
+    if (!messageBody) {
+      return {
+        message: `Necesito que me digas el contenido del mensaje. Intenta nuevamente.\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    context.stage = 'collect_recipient';
+    context.messageBody = messageBody;
+
+    return {
+      message: `Genial. ¿A quién querés enviarlo?
+
+1️⃣ A mí mismo
+2️⃣ Compartir contacto
+3️⃣ Escribir número
+
+Escribí *cancelar* si querés salir.`,
+      nextModule: 'scheduled_message_collect_recipient',
+      context: JSON.stringify(context)
+    };
+  }
+
+  if (stage === 'collect_recipient') {
+    // Si el usuario eligió "1" o "a mí mismo", usar su propio número
+    if (messageText === '1' || messageText === '1️⃣' || lower === 'a mí mismo' || lower === 'a mi mismo' || lower === 'mí mismo' || lower === 'mi mismo') {
+      context.stage = 'collect_datetime';
+      context.targetChat = userPhone;
+      context.targetType = 'user';
+      context.targetName = userName;
+
+      return {
+        message: `Perfecto, se enviará a vos. ¿Cuándo querés que lo envíe? Usa el formato \`AAAA-MM-DD HH:MM\` o algo como "mañana 09:00".\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: 'scheduled_message_collect_datetime',
+        context: JSON.stringify(context)
+      };
+    }
+
+    // Si el usuario eligió "2" o "compartir contacto", esperar el contacto
+    if (messageText === '2' || messageText === '2️⃣' || lower === 'compartir contacto' || lower === 'compartir') {
+      context.stage = 'waiting_contact';
+      return {
+        message: `📱 *Compartir Contacto*\n\nToca el ícono de 📎 (adjuntar)\nSelecciona *"Contacto"*\nElige el contacto a agregar\n\n_Escribí *"cancelar"* para volver_`,
+        nextModule: 'scheduled_message_waiting_contact',
+        context: JSON.stringify(context)
+      };
+    }
+
+    // Si el usuario eligió "3" o "escribir número", pedir el número
+    if (messageText === '3' || messageText === '3️⃣' || lower === 'escribir número' || lower === 'escribir numero' || lower === 'número' || lower === 'numero') {
+      context.stage = 'collect_phone';
+      return {
+        message: `📱 *Escribir Número*\n\nEscribí el número de teléfono (con código de país):\n\n_Ejemplo: +5491123456789 o 91123456789_\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: 'scheduled_message_collect_phone',
+        context: JSON.stringify(context)
+      };
+    }
+
+    return {
+      message: `❌ Opción no válida.\n\n*1* - A mí mismo\n*2* - Compartir contacto\n*3* - Escribir número\n\nEscribí *cancelar* si querés salir.`,
+      nextModule: session.current_module,
+      context: session.context
+    };
+  }
+
+  if (stage === 'collect_phone') {
+    const phoneInput = messageText.trim();
+    if (!phoneInput) {
+      return {
+        message: `Necesito un número de teléfono válido. Intenta nuevamente.\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    // Normalizar el número (quitar espacios, guiones, paréntesis)
+    const normalizedPhone = phoneInput.replace(/\D/g, '');
+    if (normalizedPhone.length < 8) {
+      return {
+        message: `El número parece inválido. Asegurate de incluir el código de país.\n\n_Ejemplo: +5491123456789_\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    context.stage = 'collect_datetime';
+    context.targetChat = normalizedPhone;
+    context.targetType = 'user';
+    context.targetName = phoneInput; // Guardar el número ingresado como nombre temporal
+
+    return {
+      message: `Perfecto, se enviará a ${phoneInput}. ¿Cuándo querés que lo envíe? Usa el formato \`AAAA-MM-DD HH:MM\` o algo como "mañana 09:00".\n\nEscribí *cancelar* si querés salir.`,
+      nextModule: 'scheduled_message_collect_datetime',
+      context: JSON.stringify(context)
+    };
+  }
+
+  if (stage === 'collect_datetime') {
+    const parsed = parseDateTimeInput(messageText);
+
+    if (!parsed) {
+      return {
+        message: `No pude entender la fecha y hora. Intenta con algo como \`2025-11-20 09:00\` o "mañana 8".\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    const scheduledDate = parsed.date;
+    const isRelative = parsed.isRelative || false;
+
+    const now = new Date();
+    const MIN_TIME_MS = 60000; // 1 minuto mínimo
+    if (scheduledDate.getTime() <= now.getTime() + MIN_TIME_MS) {
+      return {
+        message: `⏱️ La fecha y hora deben ser en el futuro (mínimo 1 minuto desde ahora).\n\nIntenta nuevamente.\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    const limit = checkDailyLimit(db, userPhone);
+    if (!limit.allowed) {
+      return {
+        message: buildLimitWarning(userName, limit.isPremium),
+        nextModule: 'main',
+        context: null
+      };
+    }
+
+    const tzInfo = getUserTimezoneInfo(db, userPhone);
+    let adjustedDate = scheduledDate;
+    if (!isRelative) {
+      const serverOffset = getServerOffsetMinutes();
+      const diffMinutes = tzInfo.offsetMinutes - serverOffset;
+      adjustedDate = new Date(scheduledDate.getTime() - diffMinutes * 60000);
+    }
+    const sendAtStr = formatDateTimeForSQLite(adjustedDate);
+    const targetChat = context.targetChat || userPhone;
+    const targetType = context.targetType || 'user';
+    const messageId = createScheduledMessage(db, {
+      creatorPhone: userPhone,
+      targetChat,
+      targetType,
+      messageBody: context.messageBody,
+      sendAt: sendAtStr,
+      timezoneOffsetMinutes: tzInfo.offsetMinutes
+    });
+
+    // Construir mensaje de confirmación con información del destinatario
+    let recipientInfo = 'a vos';
+    if (context.targetName && context.targetName !== userName) {
+      recipientInfo = `a ${context.targetName}`;
+    } else if (targetChat !== userPhone) {
+      recipientInfo = `a ${targetChat}`;
+    }
+
+    const formattedDate = calendarUtils.formatDateForDisplay(scheduledDate);
+
+    return {
+      message: `✅ Mensaje programado (ID #${messageId}).
+
+📅 Se enviará el ${formattedDate} ${recipientInfo}.
+📝 Contenido:
+${context.messageBody}
+
+Escribí *"mensajes programados"* para ver tus pendientes o *"cancelar mensaje ${messageId}"* si cambiás de idea.`,
+      nextModule: 'main',
+      context: null
+    };
+  }
+
+  return {
+    message: 'No entendí ese paso. Volvemos al menú principal.',
+    nextModule: 'main',
+    context: null
+  };
+}
+
+function formatScheduledList(items, userOffsetMinutes) {
+  if (!items || items.length === 0) {
+    return 'No tenés mensajes programados por ahora.';
+  }
+
+  const serverOffset = getServerOffsetMinutes();
+  const diffMinutes = (userOffsetMinutes !== undefined && userOffsetMinutes !== null)
+    ? userOffsetMinutes - serverOffset
+    : 0;
+
+  const lines = items.map(item => {
+    let displayDate = item.send_at;
+    if (item.send_at) {
+      // send_at está en formato 'YYYY-MM-DD HH:MM:SS' en timezone local del servidor
+      // Parsearlo como fecha local (no UTC)
+      const [datePart, timePart] = item.send_at.split(' ');
+      const [year, month, day] = datePart.split('-').map(Number);
+      const [hour, minute, second] = timePart.split(':').map(Number);
+      const baseDate = new Date(year, month - 1, day, hour, minute, second || 0);
+      
+      // send_at ya está ajustado para la hora del servidor desde la hora del usuario
+      // Para mostrarlo en la hora del usuario, necesitamos revertir el ajuste
+      // Si diffMinutes > 0, el usuario está adelante del servidor, así que sumamos
+      // Si diffMinutes < 0, el usuario está atrás del servidor, así que restamos
+      const userDate = new Date(baseDate.getTime() + diffMinutes * 60000);
+      displayDate = userDate;
+    }
+    const header = `#${item.id} • ${calendarUtils.formatDateForDisplay(displayDate)}`;
+    const body = (item.message_body || '').trim().substring(0, 120);
+    return `${header}
+   ${body}${body.length === 120 ? '…' : ''}`;
+  });
+
+  return `📬 *Tus mensajes programados*
+
+${lines.join('\n\n')}
+
+Para cancelar:
+• *"cancelar mensaje ID"* - Cancelar uno específico
+• *"cancelar mensaje 1 2 3"* - Cancelar múltiples
+• *"cancelar todos"* - Cancelar todos los pendientes`;
+}
+
+module.exports = {
+  startSchedulingFlow,
+  handleFlowMessage,
+  listScheduledMessages,
+  cancelScheduledMessage,
+  cancelAllScheduledMessages,
+  cancelMultipleScheduledMessages,
+  formatScheduledList,
+  buildLimitWarning,
+  checkDailyLimit,
+  getUserTimezoneInfo,
+  getServerOffsetMinutes,
+  isPremiumUser,
+  getPremiumLimit
+};

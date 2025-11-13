@@ -36,6 +36,8 @@
 - 💰 Sistema de pagos registrados, múltiples monedas - Pendiente
 - 🤖 IA más integrada con módulos - Pendiente
 - 🔧 Logs, errores, optimización BD - Pendiente
+- 🌐 Acceso remoto al dashboard - Pendiente
+- ☁️ Hosting y despliegue en la nube - Pendiente
 
 ### Q2 2025 - Nuevas Features (6-8 semanas)
 **Enfoque:** Expandir capacidades del bot

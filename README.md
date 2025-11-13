@@ -264,6 +264,12 @@ Bot: 📬 Tus mensajes programados
         Reunión importante
 ```
 
+## 📱 Desarrollo desde Móvil
+
+¿Querés trabajar en el proyecto desde tu celular? Consultá [MOBILE_DEVELOPMENT.md](MOBILE_DEVELOPMENT.md) para ver todas las opciones disponibles.
+
+**Recomendación rápida:** Usá [GitHub Codespaces](https://github.com/codespaces) para tener VS Code completo en el navegador desde cualquier dispositivo.
+
 ## 📁 Estructura del Proyecto
 
 ```

@@ -102,6 +102,21 @@ function parseNaturalDate(dateText) {
 function parseTime(timeText) {
   const text = timeText.toLowerCase().trim();
   
+  const ampmFullMatch = text.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.|a|p)$/i);
+  if (ampmFullMatch) {
+    let hour = parseInt(ampmFullMatch[1], 10);
+    const minutesPart = ampmFullMatch[2] ? ampmFullMatch[2] : '00';
+    const period = ampmFullMatch[3].toLowerCase();
+
+    if (period.startsWith('p') && hour !== 12) {
+      hour += 12;
+    } else if (period.startsWith('a') && hour === 12) {
+      hour = 0;
+    }
+
+    return `${String(hour).padStart(2, '0')}:${minutesPart.padStart(2, '0')}`;
+  }
+  
   // Formato HH:MM
   if (/^\d{1,2}:\d{2}$/.test(text)) {
     const [hours, minutes] = text.split(':');

@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "dashboard": "node admin-dashboard/server.js",
+    "start:all": "concurrently \"npm start\" \"npm run dashboard\""
   },
   "keywords": [
     "whatsapp",
@@ -21,6 +23,7 @@
     "@anthropic-ai/sdk": "^0.32.1",
     "better-sqlite3": "^11.0.0",
     "dotenv": "^16.4.5",
+    "express": "^4.21.2",
     "googleapis": "^165.0.0",
     "node-cron": "^3.0.3",
     "qrcode-terminal": "^0.12.0",

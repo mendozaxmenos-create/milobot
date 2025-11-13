@@ -218,5 +218,128 @@ addColumnIfNotExists('classroom_coursework', 'account_id', 'INTEGER');
 addColumnIfNotExists('classroom_accounts', 'account_name', 'TEXT');
 addColumnIfNotExists('classroom_accounts', 'last_sync', 'INTEGER');
 
+console.log('\n💰 Actualizando tabla expense_groups...');
+addColumnIfNotExists('expense_groups', 'last_reset_at', 'DATETIME');
+
+// Crear tabla para recaps semanales
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS weekly_recaps (
+      user_phone TEXT PRIMARY KEY,
+      last_sent_at DATETIME,
+      last_activity_hash TEXT,
+      enabled INTEGER DEFAULT 1,
+      FOREIGN KEY (user_phone) REFERENCES users(phone)
+    )
+  `);
+  console.log('✅ Tabla weekly_recaps creada/verificada');
+} catch (error) {
+  console.error('❌ Error creando weekly_recaps:', error.message);
+}
+
+// Crear tabla para estadísticas de uso del bot
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bot_usage_stats (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_phone TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      event_data TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_phone) REFERENCES users(phone)
+    )
+  `);
+  console.log('✅ Tabla bot_usage_stats creada/verificada');
+  
+  // Crear índices para mejorar rendimiento de consultas
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_user_phone ON bot_usage_stats(user_phone);
+      CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_event_type ON bot_usage_stats(event_type);
+      CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_created_at ON bot_usage_stats(created_at);
+      CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_user_event ON bot_usage_stats(user_phone, event_type);
+    `);
+    console.log('✅ Índices de bot_usage_stats creados/verificados');
+  } catch (error) {
+    console.error('❌ Error creando índices de bot_usage_stats:', error.message);
+  }
+} catch (error) {
+  console.error('❌ Error creando bot_usage_stats:', error.message);
+}
+
+// Crear tabla para cuentas bancarias de usuarios
+console.log('\n💳 Creando tabla bank_accounts...');
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS bank_accounts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_phone TEXT NOT NULL,
+      bank_name TEXT NOT NULL,
+      account_type TEXT NOT NULL,
+      account_number TEXT,
+      alias TEXT,
+      cbu TEXT,
+      currency TEXT DEFAULT 'ARS',
+      is_default INTEGER DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_phone) REFERENCES users(phone) ON DELETE CASCADE
+    )
+  `);
+  console.log('✅ Tabla bank_accounts creada/verificada');
+  
+  // Crear índices para mejorar rendimiento
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_bank_accounts_user_phone ON bank_accounts(user_phone);
+      CREATE INDEX IF NOT EXISTS idx_bank_accounts_is_default ON bank_accounts(user_phone, is_default);
+    `);
+    console.log('✅ Índices de bank_accounts creados/verificados');
+  } catch (error) {
+    console.error('❌ Error creando índices de bank_accounts:', error.message);
+  }
+} catch (error) {
+  console.error('❌ Error creando bank_accounts:', error.message);
+}
+
+// Crear tabla para pagos realizados en grupos de gastos
+console.log('\n💵 Creando tabla expense_payments...');
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS expense_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      group_id INTEGER NOT NULL,
+      from_user_phone TEXT NOT NULL,
+      to_user_phone TEXT NOT NULL,
+      amount REAL NOT NULL,
+      payment_method TEXT,
+      bank_account_id INTEGER,
+      payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+      notes TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (group_id) REFERENCES expense_groups(id) ON DELETE CASCADE,
+      FOREIGN KEY (from_user_phone) REFERENCES users(phone),
+      FOREIGN KEY (to_user_phone) REFERENCES users(phone),
+      FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE SET NULL
+    )
+  `);
+  console.log('✅ Tabla expense_payments creada/verificada');
+  
+  // Crear índices para mejorar rendimiento
+  try {
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_expense_payments_group_id ON expense_payments(group_id);
+      CREATE INDEX IF NOT EXISTS idx_expense_payments_from_user ON expense_payments(from_user_phone);
+      CREATE INDEX IF NOT EXISTS idx_expense_payments_to_user ON expense_payments(to_user_phone);
+      CREATE INDEX IF NOT EXISTS idx_expense_payments_group_from_to ON expense_payments(group_id, from_user_phone, to_user_phone);
+    `);
+    console.log('✅ Índices de expense_payments creados/verificados');
+  } catch (error) {
+    console.error('❌ Error creando índices de expense_payments:', error.message);
+  }
+} catch (error) {
+  console.error('❌ Error creando expense_payments:', error.message);
+}
+
 console.log('\n🎉 Migraciones completadas!');
 db.close();
