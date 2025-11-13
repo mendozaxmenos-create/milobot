@@ -585,6 +585,7 @@ module.exports = {
   formatScheduledList,
   buildLimitWarning,
   checkDailyLimit,
+  getPendingCount,
   getUserTimezoneInfo,
   getServerOffsetMinutes,
   isPremiumUser,
