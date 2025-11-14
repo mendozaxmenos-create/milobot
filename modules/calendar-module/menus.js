@@ -17,10 +17,11 @@ function getMainMenu() {
 5️⃣ Próximos eventos
 6️⃣ Gestionar eventos
 7️⃣ Búsqueda
-8️⃣ Vista mensual
-9️⃣ ⚙️ Configuración
-🔟 🔄 Sync Google Calendar
-1️⃣1️⃣ Volver al menú
+8️⃣ Vista semanal
+9️⃣ Vista mensual
+🔟 ⚙️ Configuración
+1️⃣1️⃣ 🔄 Sync Google Calendar
+1️⃣2️⃣ Volver al menú
 
 _¿Qué deseas hacer?_
 
@@ -231,6 +232,91 @@ function formatEventsList(events) {
 }
 
 /**
+ * Vista semanal - Calendario
+ */
+function getWeekView(startDate, events, showNavigation = true) {
+  const dayNames = ['Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado', 'Domingo'];
+  const monthNames = [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+  ];
+
+  // Calcular fechas de la semana (lunes a domingo)
+  const weekDates = [];
+  for (let i = 0; i < 7; i++) {
+    const date = new Date(startDate);
+    date.setDate(startDate.getDate() + i);
+    weekDates.push(date);
+  }
+
+  const firstDay = weekDates[0];
+  const lastDay = weekDates[6];
+  
+  let calendar = `📅 *Semana del ${firstDay.getDate()} de ${monthNames[firstDay.getMonth()]} al ${lastDay.getDate()} de ${monthNames[lastDay.getMonth()]} ${firstDay.getFullYear()}*\n\n`;
+
+  // Agrupar eventos por día
+  const eventsByDay = {};
+  events.forEach(event => {
+    const eventDate = new Date(event.event_date);
+    const dayKey = eventDate.toISOString().split('T')[0]; // YYYY-MM-DD
+    if (!eventsByDay[dayKey]) {
+      eventsByDay[dayKey] = [];
+    }
+    eventsByDay[dayKey].push(event);
+  });
+
+  // Mostrar cada día de la semana
+  weekDates.forEach((date, index) => {
+    const dayKey = date.toISOString().split('T')[0];
+    const dayEvents = eventsByDay[dayKey] || [];
+    const isToday = date.toDateString() === new Date().toDateString();
+    
+    const dayLabel = isToday ? `*${dayNames[index]} ${date.getDate()}* (Hoy)` : `${dayNames[index]} ${date.getDate()}`;
+    calendar += `${dayLabel}\n`;
+    
+    if (dayEvents.length === 0) {
+      calendar += '   _Sin eventos_\n';
+    } else {
+      dayEvents.forEach(event => {
+        const eventDate = new Date(event.event_date);
+        const timeStr = eventDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+        const categoryEmoji = getCategoryEmoji(event.category);
+        calendar += `   ${categoryEmoji} *${timeStr}* - ${event.title}\n`;
+      });
+    }
+    calendar += '\n';
+  });
+
+  // Agregar navegación si está habilitada
+  if (showNavigation) {
+    calendar += '\n*Navegación:*\n';
+    calendar += '⬅️ Semana anterior (opción 1)\n';
+    calendar += '➡️ Semana siguiente (opción 2)\n';
+    calendar += '📅 Semana actual (opción 3)\n';
+    calendar += '🔙 Volver al menú (opción 4)\n';
+  } else {
+    calendar += '\n_💡 Escribí *"volver"* o *"menu"* para regresar._';
+  }
+  
+  return calendar;
+}
+
+/**
+ * Obtener emoji según categoría
+ */
+function getCategoryEmoji(category) {
+  const emojis = {
+    'personal': '👤',
+    'trabajo': '💼',
+    'urgente': '🚨',
+    'familia': '👨‍👩‍👧‍👦',
+    'salud': '🏥',
+    'social': '🎉'
+  };
+  return emojis[category] || '📌';
+}
+
+/**
  * Vista mensual - Calendario
  */
 function getMonthView(year, month, events) {
@@ -280,5 +366,6 @@ module.exports = {
   getAddReminderInstructions,
   getEventAddedMessage,
   formatEventsList,
+  getWeekView,
   getMonthView
 };

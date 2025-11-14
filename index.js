@@ -56,6 +56,16 @@ const KEYWORD_SHORTCUTS = [
     keywords: ['programar mensaje', 'mensaje programado', 'programar']
   }
 ];
+// Configuración de modo debug (optimización: desactivar logs en producción)
+const DEBUG_MODE = process.env.DEBUG === 'true' || process.env.NODE_ENV !== 'production';
+
+// Helper para logs condicionales
+function debugLog(...args) {
+  if (DEBUG_MODE) {
+    console.log(...args);
+  }
+}
+
 // Crear carpeta data si no existe
 if (!fs.existsSync('./data')) {
   fs.mkdirSync('./data');
@@ -163,6 +173,8 @@ db.exec(`
     creator_phone TEXT NOT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_closed INTEGER DEFAULT 0,
+    closed_at DATETIME,
+    currency TEXT DEFAULT 'ARS',
     FOREIGN KEY (creator_phone) REFERENCES users(phone)
   );
 
@@ -180,8 +192,45 @@ db.exec(`
     payer_phone TEXT NOT NULL,
     amount REAL NOT NULL,
     description TEXT,
+    currency TEXT DEFAULT 'ARS',
+    is_paid INTEGER DEFAULT 0,
+    paid_at DATETIME,
+    paid_by TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (group_id) REFERENCES expense_groups(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS bank_accounts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    bank_name TEXT NOT NULL,
+    account_type TEXT NOT NULL,
+    account_number TEXT,
+    alias TEXT,
+    cbu TEXT,
+    currency TEXT DEFAULT 'ARS',
+    is_default INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_phone) REFERENCES users(phone) ON DELETE CASCADE
+  );
+
+  CREATE TABLE IF NOT EXISTS expense_payments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_id INTEGER NOT NULL,
+    from_user_phone TEXT NOT NULL,
+    to_user_phone TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT DEFAULT 'ARS',
+    payment_method TEXT,
+    bank_account_id INTEGER,
+    payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
+    notes TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (group_id) REFERENCES expense_groups(id) ON DELETE CASCADE,
+    FOREIGN KEY (from_user_phone) REFERENCES users(phone),
+    FOREIGN KEY (to_user_phone) REFERENCES users(phone),
+    FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE SET NULL
   );
 
   CREATE TABLE IF NOT EXISTS sessions (
@@ -252,6 +301,12 @@ CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_user_phone ON bot_usage_stats(use
 CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_event_type ON bot_usage_stats(event_type);
 CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_created_at ON bot_usage_stats(created_at);
 CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_user_event ON bot_usage_stats(user_phone, event_type);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_user_phone ON bank_accounts(user_phone);
+CREATE INDEX IF NOT EXISTS idx_bank_accounts_is_default ON bank_accounts(user_phone, is_default);
+CREATE INDEX IF NOT EXISTS idx_expense_payments_group_id ON expense_payments(group_id);
+CREATE INDEX IF NOT EXISTS idx_expense_payments_from_user ON expense_payments(from_user_phone);
+CREATE INDEX IF NOT EXISTS idx_expense_payments_to_user ON expense_payments(to_user_phone);
+CREATE INDEX IF NOT EXISTS idx_expense_payments_group_from_to ON expense_payments(group_id, from_user_phone, to_user_phone);
 
   CREATE TABLE IF NOT EXISTS classroom_courses (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -318,6 +373,85 @@ CREATE INDEX IF NOT EXISTS idx_bot_usage_stats_user_event ON bot_usage_stats(use
     last_sync INTEGER,
     last_summary_at INTEGER,
     last_summary_hash TEXT,
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+  CREATE TABLE IF NOT EXISTS subscriptions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    plan_type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'pending',
+    start_date DATETIME,
+    end_date DATETIME,
+    renewal_date DATETIME,
+    payment_provider TEXT NOT NULL,
+    payment_id TEXT,
+    payment_status TEXT,
+    preference_id TEXT,
+    amount REAL NOT NULL,
+    currency TEXT DEFAULT 'ARS',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    cancelled_at DATETIME,
+    FOREIGN KEY (user_phone) REFERENCES users(phone)
+  );
+
+CREATE INDEX IF NOT EXISTS idx_subscriptions_user_phone ON subscriptions(user_phone);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_status ON subscriptions(status);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_payment_id ON subscriptions(payment_id);
+
+  CREATE TABLE IF NOT EXISTS payment_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    subscription_id INTEGER,
+    payment_provider TEXT NOT NULL,
+    payment_id TEXT NOT NULL,
+    amount REAL NOT NULL,
+    currency TEXT DEFAULT 'ARS',
+    status TEXT NOT NULL,
+    payment_method TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (user_phone) REFERENCES users(phone),
+    FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
+  );
+
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_user_phone ON payment_transactions(user_phone);
+CREATE INDEX IF NOT EXISTS idx_payment_transactions_payment_id ON payment_transactions(payment_id);
+
+-- Índices adicionales para optimización de consultas frecuentes
+CREATE INDEX IF NOT EXISTS idx_calendar_events_user_phone ON calendar_events(user_phone);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_event_date ON calendar_events(event_date);
+CREATE INDEX IF NOT EXISTS idx_calendar_events_user_date ON calendar_events(user_phone, event_date);
+CREATE INDEX IF NOT EXISTS idx_expenses_group_id ON expenses(group_id);
+CREATE INDEX IF NOT EXISTS idx_expenses_payer_phone ON expenses(payer_phone);
+CREATE INDEX IF NOT EXISTS idx_expenses_group_payer ON expenses(group_id, payer_phone);
+CREATE INDEX IF NOT EXISTS idx_group_participants_group_id ON group_participants(group_id);
+CREATE INDEX IF NOT EXISTS idx_group_participants_phone ON group_participants(phone);
+CREATE INDEX IF NOT EXISTS idx_group_participants_group_phone ON group_participants(group_id, phone);
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_send_at ON scheduled_messages(send_at);
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status ON scheduled_messages(status);
+CREATE INDEX IF NOT EXISTS idx_scheduled_messages_status_send_at ON scheduled_messages(status, send_at);
+CREATE INDEX IF NOT EXISTS idx_expense_groups_creator_phone ON expense_groups(creator_phone);
+CREATE INDEX IF NOT EXISTS idx_expense_groups_is_closed ON expense_groups(is_closed);
+CREATE INDEX IF NOT EXISTS idx_expense_groups_creator_closed ON expense_groups(creator_phone, is_closed);
+CREATE INDEX IF NOT EXISTS idx_users_phone ON users(phone);
+CREATE INDEX IF NOT EXISTS idx_feedback_user_phone ON feedback(user_phone);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback(status);
+CREATE INDEX IF NOT EXISTS idx_classroom_courses_user_phone ON classroom_courses(user_phone);
+CREATE INDEX IF NOT EXISTS idx_classroom_courses_account_id ON classroom_courses(account_id);
+CREATE INDEX IF NOT EXISTS idx_classroom_announcements_user_phone ON classroom_announcements(user_phone);
+CREATE INDEX IF NOT EXISTS idx_classroom_announcements_course_id ON classroom_announcements(course_id);
+CREATE INDEX IF NOT EXISTS idx_classroom_coursework_user_phone ON classroom_coursework(user_phone);
+CREATE INDEX IF NOT EXISTS idx_classroom_coursework_course_id ON classroom_coursework(course_id);
+
+  CREATE TABLE IF NOT EXISTS premium_notifications_queue (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_phone TEXT NOT NULL,
+    notification_type TEXT NOT NULL,
+    processed INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    processed_at DATETIME,
     FOREIGN KEY (user_phone) REFERENCES users(phone)
   );
 `);
@@ -431,6 +565,50 @@ try {
   // La columna ya existe, ignorar error
 }
 
+// Agregar columnas de moneda y cierre a grupos de gastos
+try {
+  db.exec('ALTER TABLE expense_groups ADD COLUMN currency TEXT DEFAULT \'ARS\'');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE expense_groups ADD COLUMN closed_at DATETIME');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE expenses ADD COLUMN currency TEXT DEFAULT \'ARS\'');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE expense_payments ADD COLUMN currency TEXT DEFAULT \'ARS\'');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+// Agregar columnas para marcar gastos como pagados
+try {
+  db.exec('ALTER TABLE expenses ADD COLUMN is_paid INTEGER DEFAULT 0');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE expenses ADD COLUMN paid_at DATETIME');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
+try {
+  db.exec('ALTER TABLE expenses ADD COLUMN paid_by TEXT');
+} catch (e) {
+  // La columna ya existe, ignorar error
+}
+
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.env.GOOGLE_REDIRECT_URI) {
   googleIntegration.syncAllUsers(db)
     .then(({ processed, skipped }) => {
@@ -448,6 +626,52 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET && process.
 console.log('✅ Base de datos inicializada');
 
 // ============================================
+// STATEMENTS PREPARADOS (OPTIMIZACIÓN)
+// ============================================
+// Preparar statements frecuentes una sola vez para mejor rendimiento
+const preparedStatements = {
+  getUserByPhone: db.prepare('SELECT * FROM users WHERE phone = ?'),
+  getUserLocation: db.prepare('SELECT location_city, location_lat, location_lon, location_state, location_country, location_country_code, home_currency, home_country_code FROM users WHERE phone = ?'),
+  getSession: db.prepare('SELECT * FROM sessions WHERE user_phone = ?'),
+  updateSession: db.prepare(`
+    INSERT INTO sessions (user_phone, current_module, context, last_updated)
+    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+    ON CONFLICT(user_phone) DO UPDATE SET 
+      current_module = ?,
+      context = ?,
+      last_updated = CURRENT_TIMESTAMP
+  `),
+  deleteSession: db.prepare('DELETE FROM sessions WHERE user_phone = ?'),
+  checkUserExists: db.prepare('SELECT 1 FROM users WHERE phone = ?'),
+  checkInviteExists: db.prepare('SELECT 1 FROM user_invites WHERE phone = ?'),
+  getGroupParticipants: db.prepare('SELECT id, name, phone FROM group_participants WHERE group_id = ?'),
+  getGroupParticipantsPhones: db.prepare('SELECT phone FROM group_participants WHERE group_id = ?'),
+  getExpenseGroup: db.prepare('SELECT id, name, is_closed, created_at, creator_phone FROM expense_groups WHERE id = ?'),
+  getActiveExpenseGroup: db.prepare(`
+    SELECT id, name, created_at
+    FROM expense_groups
+    WHERE creator_phone = ? AND IFNULL(is_closed, 0) = 0
+    ORDER BY created_at DESC
+    LIMIT 1
+  `),
+  getExpensesByGroup: db.prepare(`
+    SELECT e.id, e.group_id, e.payer_phone, e.amount, e.description, e.currency, e.is_paid, e.paid_at, e.paid_by, e.created_at,
+           COALESCE(p.name, e.payer_phone) as payer_name
+    FROM expenses e
+    LEFT JOIN group_participants p ON e.payer_phone = p.phone AND e.group_id = p.group_id
+    INNER JOIN expense_groups eg ON e.group_id = eg.id
+    WHERE e.group_id = ? 
+      AND eg.id = ?
+      AND IFNULL(eg.is_closed, 0) = 0
+      AND eg.creator_phone IS NOT NULL
+      AND eg.id IS NOT NULL
+    ORDER BY e.created_at DESC
+  `)
+};
+
+console.log('✅ Statements preparados inicializados');
+
+// ============================================
 // CONFIGURACIÓN DE CLAUDE AI
 // ============================================
 
@@ -461,6 +685,10 @@ if (anthropicApiKey) {
 } else {
   console.warn('⚠️ Asistente IA (Claude) no configurado: falta ANTHROPIC_API_KEY.');
 }
+
+// CONFIGURACIÓN DE MERCADOPAGO
+const mercadoPagoIntegration = require('./modules/mercadopago-integration');
+const mercadoPagoInitialized = mercadoPagoIntegration.initializeMercadoPago();
 
 // ============================================
 // FUNCIONES DE BASE DE DATOS
@@ -575,14 +803,14 @@ async function detectAndSaveUserLocation(userPhone) {
       // El usuario ya tiene ubicación, no hacer nada
       return;
     }
-
+    
     console.log(`[DEBUG] Detectando ubicación automática (solo sugerencia) para usuario: ${userPhone}`);
-
+    
     const weatherAPI = require('./modules/weather-module/weather-api');
     const weatherModule = require('./modules/weather-module');
-
+    
     const ipLocation = await weatherAPI.getLocationByIP();
-
+    
     if (ipLocation.success && ipLocation.data) {
       const city = ipLocation.data.city || null;
       const country = ipLocation.data.country || null;
@@ -659,7 +887,9 @@ function hasPendingInvite(phone) {
   if (!phone) {
     return false;
   }
-  const row = db.prepare('SELECT 1 FROM user_invites WHERE phone = ?').get(phone);
+  const normalizedPhone = normalizePhone(phone);
+  if (!normalizedPhone) return false;
+  const row = preparedStatements.checkInviteExists.get(normalizedPhone);
   return Boolean(row);
 }
 
@@ -735,28 +965,18 @@ async function inviteMissingGroupMembers(participants = [], inviterPhone = null,
 }
 
 function getSession(phone) {
-  const stmt = db.prepare('SELECT * FROM sessions WHERE user_phone = ?');
-  return stmt.get(phone);
+  return preparedStatements.getSession.get(phone) || null;
 }
 
 function updateSession(phone, module, context = null) {
-  const stmt = db.prepare(`
-    INSERT INTO sessions (user_phone, current_module, context, last_updated)
-    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-    ON CONFLICT(user_phone) DO UPDATE SET 
-      current_module = ?,
-      context = ?,
-      last_updated = CURRENT_TIMESTAMP
-  `);
-  stmt.run(phone, module, context, module, context);
+  preparedStatements.updateSession.run(phone, module, context, module, context);
   
   // Reiniciar el timeout cada vez que hay actividad
   resetTimeout(phone);
 }
 
 function clearSession(phone) {
-  const stmt = db.prepare('DELETE FROM sessions WHERE user_phone = ?');
-  stmt.run(phone);
+  preparedStatements.deleteSession.run(phone);
   console.log(`🕐 Sesión cerrada por inactividad: ${phone}`);
 }
 
@@ -807,17 +1027,38 @@ function createExpenseGroup(name, creatorPhone) {
   return { success: true, groupId: result.lastInsertRowid };
 }
 
+// Caché para normalización de teléfonos (optimización)
+const phoneNormalizationCache = new Map();
+const PHONE_CACHE_MAX_SIZE = 10000; // Limitar tamaño del caché
+
 function normalizePhone(phone = '') {
   if (!phone) {
     return null;
   }
+  
+  // Verificar caché
+  if (phoneNormalizationCache.has(phone)) {
+    return phoneNormalizationCache.get(phone);
+  }
+  
   const digits = phone.replace(/\D/g, '');
   if (!digits) {
+    phoneNormalizationCache.set(phone, null);
     return null;
   }
   if (digits.length < 6 || digits.length > 15) {
+    phoneNormalizationCache.set(phone, null);
     return null;
   }
+  
+  // Limpiar caché si es muy grande
+  if (phoneNormalizationCache.size >= PHONE_CACHE_MAX_SIZE) {
+    // Eliminar el 20% más antiguo (FIFO aproximado)
+    const keysToDelete = Array.from(phoneNormalizationCache.keys()).slice(0, Math.floor(PHONE_CACHE_MAX_SIZE * 0.2));
+    keysToDelete.forEach(key => phoneNormalizationCache.delete(key));
+  }
+  
+  phoneNormalizationCache.set(phone, digits);
   return digits;
 }
 
@@ -855,10 +1096,7 @@ function addParticipant(groupId, phone, name) {
 
   // Buscar participantes existentes por teléfono normalizado
   // Esto evita duplicados con diferentes formatos del mismo teléfono
-  const allParticipants = db.prepare(`
-    SELECT id, name, phone FROM group_participants 
-    WHERE group_id = ?
-  `).all(groupId);
+  const allParticipants = preparedStatements.getGroupParticipants.all(groupId);
 
   let existing = null;
   for (const participant of allParticipants) {
@@ -907,10 +1145,10 @@ function addParticipant(groupId, phone, name) {
   return { added: true, id: result.lastInsertRowid, phone: normalizedPhone };
 }
 
-function addExpense(groupId, payerPhone, amount, description) {
+function addExpense(groupId, payerPhone, amount, description, currency = null) {
   // Verificar que el grupo exista y esté activo antes de agregar el gasto
   const group = db.prepare(`
-    SELECT id, name, is_closed
+    SELECT id, name, is_closed, currency
     FROM expense_groups
     WHERE id = ?
   `).get(groupId);
@@ -922,14 +1160,17 @@ function addExpense(groupId, payerPhone, amount, description) {
   
   if (group.is_closed === 1) {
     console.error(`[ERROR] addExpense: Grupo ${groupId} está cerrado`);
-    return { success: false, error: 'Grupo cerrado' };
+    return { success: false, error: 'Grupo cerrado. No se pueden agregar nuevos gastos. Podés reabrirlo desde el menú.' };
   }
   
+  // Usar la moneda del grupo si no se especifica
+  const expenseCurrency = currency || group.currency || 'ARS';
+  
   const stmt = db.prepare(`
-    INSERT INTO expenses (group_id, payer_phone, amount, description)
-    VALUES (?, ?, ?, ?)
+    INSERT INTO expenses (group_id, payer_phone, amount, description, currency)
+    VALUES (?, ?, ?, ?, ?)
   `);
-  const result = stmt.run(groupId, payerPhone, amount, description);
+  const result = stmt.run(groupId, payerPhone, amount, description, expenseCurrency);
   
   console.log(`[DEBUG] addExpense: Gasto agregado - ID: ${result.lastInsertRowid}, Grupo: ${groupId} (${group.name}), Pagador: ${payerPhone}, Monto: ${amount}, Descripción: ${description}`);
   
@@ -949,13 +1190,9 @@ function addExpense(groupId, payerPhone, amount, description) {
 }
 
 function getActiveExpenseGroupForChat(chatId) {
-  return db.prepare(`
-    SELECT id, name, created_at
-    FROM expense_groups
-    WHERE creator_phone = ? AND IFNULL(is_closed, 0) = 0
-    ORDER BY created_at DESC
-    LIMIT 1
-  `).get(chatId);
+  const normalizedPhone = normalizePhone(chatId);
+  if (!normalizedPhone) return null;
+  return preparedStatements.getActiveExpenseGroup.get(normalizedPhone);
 }
 
 function updateExpenseGroupName(expenseGroupId, newName) {
@@ -1589,7 +1826,7 @@ function getBankAliasForUser(userPhone) {
 // FUNCIONES DE BASE DE DATOS: PAGOS REALIZADOS
 // ============================================
 
-function addPayment(groupId, fromUserPhone, toUserPhone, amount, paymentMethod = null, bankAccountId = null, notes = null) {
+function addPayment(groupId, fromUserPhone, toUserPhone, amount, paymentMethod = null, bankAccountId = null, notes = null, currency = null) {
   const normalizedFromPhone = normalizePhone(fromUserPhone);
   const normalizedToPhone = normalizePhone(toUserPhone);
   
@@ -1599,7 +1836,7 @@ function addPayment(groupId, fromUserPhone, toUserPhone, amount, paymentMethod =
 
   // Verificar que el grupo exista y esté activo
   const group = db.prepare(`
-    SELECT id, name, is_closed
+    SELECT id, name, is_closed, currency
     FROM expense_groups
     WHERE id = ?
   `).get(groupId);
@@ -1609,8 +1846,11 @@ function addPayment(groupId, fromUserPhone, toUserPhone, amount, paymentMethod =
   }
   
   if (group.is_closed === 1) {
-    return { success: false, error: 'Grupo cerrado' };
+    return { success: false, error: 'Grupo cerrado. No se pueden registrar nuevos pagos. Podés reabrirlo desde el menú.' };
   }
+  
+  // Usar la moneda del grupo si no se especifica
+  const paymentCurrency = currency || group.currency || 'ARS';
 
   // Verificar que no sea el mismo usuario
   if (normalizedFromPhone === normalizedToPhone) {
@@ -1619,10 +1859,10 @@ function addPayment(groupId, fromUserPhone, toUserPhone, amount, paymentMethod =
 
   try {
     const stmt = db.prepare(`
-      INSERT INTO expense_payments (group_id, from_user_phone, to_user_phone, amount, payment_method, bank_account_id, notes, payment_date)
-      VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+      INSERT INTO expense_payments (group_id, from_user_phone, to_user_phone, amount, currency, payment_method, bank_account_id, notes, payment_date)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
     `);
-    const result = stmt.run(groupId, normalizedFromPhone, normalizedToPhone, amount, paymentMethod, bankAccountId, notes);
+    const result = stmt.run(groupId, normalizedFromPhone, normalizedToPhone, amount, paymentCurrency, paymentMethod, bankAccountId, notes);
     
     console.log(`[DEBUG] addPayment: Pago registrado - ID: ${result.lastInsertRowid}, Grupo: ${groupId}, De: ${normalizedFromPhone}, Para: ${normalizedToPhone}, Monto: ${amount}`);
     
@@ -1821,11 +2061,7 @@ function parseGroupExpenseMessage(rawText = '') {
 
 async function getExpenseSummary(groupId, creatorPhone = null) {
   // Verificar que el grupo exista y esté activo (no cerrado y no eliminado)
-  const group = db.prepare(`
-    SELECT id, name, is_closed, created_at, creator_phone
-    FROM expense_groups 
-    WHERE id = ?
-  `).get(groupId);
+  const group = preparedStatements.getExpenseGroup.get(groupId);
 
   if (!group || group.is_closed === 1) {
     return {
@@ -1855,18 +2091,7 @@ async function getExpenseSummary(groupId, creatorPhone = null) {
   // Verificar que el grupo exista y esté activo antes de obtener los gastos
   // NOTA: NO filtrar por last_reset_at - mostrar TODOS los gastos del grupo activo
   // last_reset_at solo se usa para limpiar gastos antiguos cuando se crea un nuevo grupo
-  const expenses = db.prepare(`
-    SELECT e.id, e.amount, e.description, e.payer_phone, p.name as payer_name, e.created_at, e.group_id
-    FROM expenses e
-    LEFT JOIN group_participants p ON e.payer_phone = p.phone AND e.group_id = p.group_id
-    INNER JOIN expense_groups eg ON e.group_id = eg.id
-    WHERE e.group_id = ? 
-      AND eg.id = ?
-      AND IFNULL(eg.is_closed, 0) = 0
-      AND eg.creator_phone IS NOT NULL
-      AND eg.id IS NOT NULL
-    ORDER BY e.created_at DESC
-  `).all(groupId, groupId);
+  const expenses = preparedStatements.getExpensesByGroup.all(groupId, groupId);
   
   // Log para debugging - mostrar detalles de los gastos
   console.log(`[DEBUG] getExpenseSummary: Grupo ${groupId} tiene ${expenses.length} gastos`);
@@ -1878,11 +2103,7 @@ async function getExpenseSummary(groupId, creatorPhone = null) {
 
   // Obtener todos los teléfonos únicos de participantes (excluyendo el bot)
   // IMPORTANTE: Normalizar teléfonos para evitar duplicados
-  const participants = db.prepare(`
-    SELECT phone
-    FROM group_participants
-    WHERE group_id = ?
-  `).all(groupId);
+  const participants = preparedStatements.getGroupParticipantsPhones.all(groupId);
   
   // Normalizar teléfonos y crear un Set para obtener participantes únicos
   const uniqueParticipants = new Set();
@@ -1902,6 +2123,8 @@ async function getExpenseSummary(groupId, creatorPhone = null) {
   const participantCount = uniqueParticipants.size;
   
   console.log(`[DEBUG] getExpenseSummary: Grupo ${groupId}: ${participants.length} registros en BD, ${participantCount} participantes únicos después de normalizar (bot excluido: ${botPhoneNormalized || 'N/A'})`);
+  // IMPORTANTE: Contar TODOS los gastos en el total, incluso los marcados como pagados
+  // Los gastos marcados como pagados son solo referencia visual, no modifican el cálculo
   const total = expenses.reduce((sum, e) => sum + e.amount, 0);
   const perPerson = participantCount > 0 ? (total / participantCount).toFixed(2) : 0;
 
@@ -1915,11 +2138,7 @@ async function getExpenseSummary(groupId, creatorPhone = null) {
 
 function calculateSplit(groupId, humanParticipantPhones = null) {
   // Verificar que el grupo exista y esté activo
-  const group = db.prepare(`
-    SELECT id, name, is_closed 
-    FROM expense_groups 
-    WHERE id = ?
-  `).get(groupId);
+  const group = preparedStatements.getExpenseGroup.get(groupId);
 
   if (!group || group.is_closed === 1) {
     return {
@@ -1932,6 +2151,8 @@ function calculateSplit(groupId, humanParticipantPhones = null) {
   // Obtener gastos solo de grupos activos (no cerrados)
   // IMPORTANTE: NO filtrar por last_reset_at - mostrar TODOS los gastos del grupo activo
   // last_reset_at solo se usa para limpiar gastos antiguos cuando se crea un nuevo grupo
+  // IMPORTANTE: Contar TODOS los gastos, incluso los marcados como pagados
+  // Los gastos marcados como pagados son solo referencia visual, no modifican el cálculo
   const expenses = db.prepare(`
     SELECT e.payer_phone, SUM(e.amount) as total 
     FROM expenses e
@@ -2628,9 +2849,29 @@ function markFeedbackAsRead(id) {
 // GENERADOR DE MENÚS
 // ============================================
 
-function getMainMenu(userName = '') {
+function getMainMenu(userName = '', userPhone = null) {
   const greeting = userName ? `Hola *${userName}*! 👋\n\n` : '';
-  return `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 🗓️ Programar Mensajes\n4️⃣ 💰 Dividir Gastos\n5️⃣ 🏫 Google Classroom\n6️⃣ 🤖 Asistente IA\n7️⃣ 💱 Conversor de Monedas\n8️⃣ 🤝 Invitar a un amigo\n9️⃣ ⚙️ Configuración\n🔟 ℹ️ Ayuda\n\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
+  let menu = `${greeting}🤖 *Soy Milo, tu asistente personal*\n\nSelecciona una opción:\n\n1️⃣ 🌤️ Pronóstico para hoy\n2️⃣ 📅 Calendario & Recordatorios\n3️⃣ 🗓️ Programar Mensajes\n4️⃣ 💰 Dividir Gastos\n5️⃣ 🏫 Google Classroom\n6️⃣ 🤖 Asistente IA\n7️⃣ 💱 Conversor de Monedas\n8️⃣ 🤝 Invitar a un amigo\n`;
+  
+  // Agregar opción de administrar suscripción si es Premium
+  if (userPhone) {
+    const premiumModule = require('./modules/premium-module');
+    const isPremium = premiumModule.isPremiumUser(db, userPhone);
+    if (isPremium) {
+      menu += `9️⃣ 💎 Mi Suscripción Premium\n`;
+      menu += `🔟 ⚙️ Configuración\n`;
+      menu += `1️⃣1️⃣ ℹ️ Ayuda\n`;
+    } else {
+      menu += `9️⃣ ⚙️ Configuración\n`;
+      menu += `🔟 ℹ️ Ayuda\n`;
+    }
+  } else {
+    menu += `9️⃣ ⚙️ Configuración\n`;
+    menu += `🔟 ℹ️ Ayuda\n`;
+  }
+  
+  menu += `\n_Escribe el número o habla naturalmente_\n\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar al menú principal.`;
+  return menu;
 }
 
 function getScheduledMessagesMenu(userPhone, userName = '') {
@@ -3769,8 +4010,11 @@ async function handleMessage(msg) {
   // Verificar si es un vCard (contacto compartido)
   const isVCard = msgType === 'vcard' || (msg.vCards && msg.vCards.length > 0) || (msg.hasMedia && msg.type === 'vcard');
   
-  // Si el mensaje está vacío (imagen, audio, etc.), ignorar - EXCEPTO vcards (contactos)
-  if ((!messageText || messageText.trim() === '') && !isVCard) {
+  // Verificar si es un mensaje de ubicación
+  const isLocation = msgType === 'location' || (msg.location && (msg.location.latitude || msg.location.lat));
+  
+  // Si el mensaje está vacío (imagen, audio, etc.), ignorar - EXCEPTO vcards (contactos) y ubicaciones
+  if ((!messageText || messageText.trim() === '') && !isVCard && !isLocation) {
     console.log(`📩 Mensaje de ${userPhone}: [Multimedia - ignorado]`);
     return;
   }
@@ -3832,8 +4076,13 @@ async function handleMessage(msg) {
       const normalizedCreatorPhone = normalizePhone(creatorPhone);
       const creatorChatId = `${normalizedCreatorPhone}@c.us`;
       
+      // Obtener información del remitente para el mensaje
+      const senderPhoneDisplay = normalizedUserPhone.startsWith('+') 
+        ? normalizedUserPhone 
+        : `+${normalizedUserPhone}`;
+      
       // Construir mensaje de reenvío
-      let forwardedMessage = `📩 *Respuesta de ${userName}*:\n\n`;
+      let forwardedMessage = `📩 *Respuesta de ${userName}* (${senderPhoneDisplay}):\n\n`;
       
       if (messageText && messageText.trim()) {
         forwardedMessage += messageText;
@@ -3856,6 +4105,12 @@ async function handleMessage(msg) {
         forwardedMessage += '[Mensaje vacío]';
       }
       
+      // Agregar información sobre el mensaje original
+      const originalMessagePreview = (scheduledMessageInfo.message_body || '').substring(0, 50);
+      if (originalMessagePreview) {
+        forwardedMessage += `\n\n_En respuesta a: "${originalMessagePreview}${scheduledMessageInfo.message_body.length > 50 ? '...' : ''}"_`;
+      }
+      
       // Enviar al creador original
       await client.sendMessage(creatorChatId, forwardedMessage);
       console.log(`✅ Respuesta reenviada al creador original (${creatorPhone})`);
@@ -3870,6 +4125,61 @@ async function handleMessage(msg) {
     }
   }
   
+  // También detectar si el mensaje menciona un número de teléfono que corresponde a un remitente de mensaje programado
+  // Esto permite responder directamente escribiendo al número sin necesidad de hacer reply
+  if (messageText && !isReplyToScheduled) {
+    try {
+      // Buscar números de teléfono en el mensaje
+      const phoneRegex = /\+?(\d{6,15})/g;
+      const phoneMatches = messageText.match(phoneRegex);
+      
+      if (phoneMatches && phoneMatches.length > 0) {
+        for (const phoneMatch of phoneMatches) {
+          const normalizedMatch = normalizePhone(phoneMatch);
+          if (normalizedMatch) {
+            // Buscar si este número es el creador de algún mensaje programado reciente
+            const recentScheduledMessage = db.prepare(`
+              SELECT id, creator_phone, message_body, target_chat
+              FROM scheduled_messages
+              WHERE creator_phone = ?
+                AND status = 'sent'
+                AND datetime(updated_at) >= datetime('now', '-7 days')
+              ORDER BY updated_at DESC
+              LIMIT 1
+            `).get(normalizedMatch);
+            
+            if (recentScheduledMessage) {
+              // Es una respuesta directa mencionando el número del remitente
+              const creatorPhone = recentScheduledMessage.creator_phone.replace(/@c\.us$|@g\.us$|@lid$/, '');
+              const normalizedCreatorPhone = normalizePhone(creatorPhone);
+              const creatorChatId = `${normalizedCreatorPhone}@c.us`;
+              
+              const senderPhoneDisplay = normalizedUserPhone.startsWith('+') 
+                ? normalizedUserPhone 
+                : `+${normalizedUserPhone}`;
+              
+              let forwardedMessage = `📩 *Mensaje directo de ${userName}* (${senderPhoneDisplay}):\n\n`;
+              forwardedMessage += messageText;
+              
+              const originalMessagePreview = (recentScheduledMessage.message_body || '').substring(0, 50);
+              if (originalMessagePreview) {
+                forwardedMessage += `\n\n_En respuesta a tu mensaje programado: "${originalMessagePreview}${recentScheduledMessage.message_body.length > 50 ? '...' : ''}"_`;
+              }
+              
+              await client.sendMessage(creatorChatId, forwardedMessage);
+              console.log(`✅ Mensaje directo reenviado al creador original (${creatorPhone})`);
+              await msg.reply('✅ Tu mensaje fue reenviado al remitente original.');
+              return;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[WARN] Error detectando respuesta directa por número:', error.message);
+      // Continuar con el flujo normal
+    }
+  }
+  
   console.log(`👤 Nombre del contacto: ${userName}`);
 
   // Normalizar el teléfono antes de guardarlo en la base de datos
@@ -3880,6 +4190,52 @@ async function handleMessage(msg) {
   }
 
   const userInfo = registerUser(normalizedUserPhone, userName);
+  
+  // Procesar mensaje de ubicación compartida
+  if (isLocation) {
+    try {
+      console.log(`📍 Mensaje de ubicación recibido de ${userPhone}`);
+      
+      // Obtener coordenadas del mensaje de ubicación
+      let lat = null;
+      let lon = null;
+      
+      if (msg.location) {
+        lat = msg.location.latitude || msg.location.lat;
+        lon = msg.location.longitude || msg.location.lng || msg.location.lon;
+      }
+      
+      if (!lat || !lon) {
+        console.error('[ERROR] No se pudieron obtener coordenadas del mensaje de ubicación');
+        await msg.reply('❌ No pude leer las coordenadas de la ubicación compartida. Por favor intentá compartirla nuevamente.');
+        return;
+      }
+      
+      console.log(`[DEBUG] Coordenadas recibidas: ${lat}, ${lon}`);
+      
+      // Procesar la ubicación compartida usando el módulo de clima
+      const weatherModule = require('./modules/weather-module');
+      const result = await weatherModule.processSharedLocation(db, normalizedUserPhone, userName, lat, lon);
+      
+      if (result && result.message) {
+        await msg.reply(result.message);
+      } else {
+        await msg.reply('✅ Ubicación recibida y guardada. Podés consultar el pronóstico escribiendo "pronostico".');
+      }
+      
+      // Limpiar sesión si estaba en un módulo relacionado con ubicación
+      const session = getSession(userPhone);
+      if (session && (session.current_module === 'weather' || session.current_module === 'weather_save_location')) {
+        updateSession(userPhone, 'main');
+      }
+      
+      return;
+    } catch (error) {
+      console.error('[ERROR] Error procesando mensaje de ubicación:', error);
+      await msg.reply('❌ Ocurrió un error al procesar tu ubicación. Por favor intentá nuevamente o escribí el nombre de tu ciudad.');
+      return;
+    }
+  }
 
   // Track cualquier mensaje directo recibido para estadísticas del dashboard
   try {
@@ -3924,7 +4280,7 @@ async function handleMessage(msg) {
       console.warn('[WARN] No se pudo detectar ubicación automáticamente:', error.message);
     });
     
-    response = `¡Hola *${userName}*! 👋 Bienvenido/a.\n\nSoy tu asistente personal de WhatsApp.\n\n` + getMainMenu();
+    response = `¡Hola *${userName}*! 👋 Bienvenido/a.\n\nSoy tu asistente personal de WhatsApp.\n\n` + getMainMenu(userName, userPhone);
     response += `\n\n${buildKeywordGuide()}`;
     updateSession(userPhone, 'main');
     await msg.reply(response);
@@ -4111,15 +4467,43 @@ async function handleMessage(msg) {
     }
   }
 
+  // Manejar administración de suscripción Premium
+  if (currentModule && currentModule === 'premium_management') {
+    const premiumNotifications = require('./modules/premium-module/notifications');
+    const lower = messageText.toLowerCase().trim();
+    
+    if (lower === 'menu' || lower === 'menú' || lower === 'volver' || messageText === '2' || messageText === '2️⃣') {
+      response = getMainMenu(userName, userPhone);
+      updateSession(userPhone, 'main');
+    } else if (messageText === '1' || messageText === '1️⃣') {
+      // Cancelar suscripción
+      const cancelResult = premiumNotifications.cancelSubscription(db, userPhone);
+      if (cancelResult.success) {
+        response = `✅ ${cancelResult.message}\n\n${getMainMenu(userName, userPhone)}`;
+      } else {
+        response = `❌ ${cancelResult.message}\n\n${getMainMenu(userName, userPhone)}`;
+      }
+      updateSession(userPhone, 'main');
+    } else {
+      const subscription = premiumNotifications.getSubscriptionInfo(db, userPhone);
+      const subscriptionInfo = premiumNotifications.formatSubscriptionInfo(subscription);
+      response = `${subscriptionInfo}\n\n*Opciones:*\n1️⃣ Cancelar suscripción\n2️⃣ Volver al menú principal\n\nEscribí el número de la opción.`;
+    }
+    
+    await msg.reply(response);
+    return;
+  }
+
   // Manejar flujo de suscripción Premium
   if (currentModule && currentModule === 'premium_subscription') {
     const premiumModule = require('./modules/premium-module');
-    const flowResult = premiumModule.handleSubscriptionFlow({
+    const flowResult = await premiumModule.handleSubscriptionFlow({
       db,
       userPhone,
       userName,
       messageText,
-      session
+      session,
+      client
     });
 
     if (flowResult) {
@@ -4140,7 +4524,7 @@ async function handleMessage(msg) {
     const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
     
     if (lower === 'menu' || lower === 'menú' || lower === 'volver' || messageText === '5' || messageText === '5️⃣') {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(phoneToUse, 'main');
     }
     else if (messageText === '1' || messageText === '1️⃣') {
@@ -4222,7 +4606,8 @@ async function handleMessage(msg) {
       userPhone: phoneToUse,
       userName,
       messageText,
-      session
+      session,
+      client
     });
 
     if (flowResult) {
@@ -4420,7 +4805,7 @@ async function handleMessage(msg) {
       session
     );
     if (currencyResult.exit) {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     } else {
       response = currencyResult.message || currencyModule.buildHelpMessage();
@@ -4519,17 +4904,45 @@ async function handleMessage(msg) {
         response = '🤝 *Invitar a un amigo*\n\n¿Cómo querés compartir la invitación?\n\n1️⃣ Compartir contacto de WhatsApp\n2️⃣ Escribir número manualmente\n3️⃣ Cancelar\n\n💡 Podés escribir *"volver"* en cualquier momento para regresar al menú.';
         updateSession(userPhone, 'invite_friend_method', JSON.stringify({ inviterName: userName, inviterPhone: userPhone }));
         break;
-      case '9':
-        statsModule.trackModuleAccess(db, userPhone, 'settings');
-        response = '⚙️ *Configuración general*\n\nPronto vas a poder administrar preferencias generales desde aquí.\nPor ahora, configura cada módulo desde sus propios menús.\n\nEscribe *menu* para volver al inicio.';
+      case '9': {
+        const premiumModule = require('./modules/premium-module');
+        const isPremium = premiumModule.isPremiumUser(db, userPhone);
+        
+        if (isPremium) {
+          // Menú de administración de suscripción Premium
+          statsModule.trackModuleAccess(db, userPhone, 'premium_management');
+          const premiumNotifications = require('./modules/premium-module/notifications');
+          const subscription = premiumNotifications.getSubscriptionInfo(db, userPhone);
+          const subscriptionInfo = premiumNotifications.formatSubscriptionInfo(subscription);
+          
+          response = `${subscriptionInfo}\n\n*Opciones:*\n1️⃣ Cancelar suscripción\n2️⃣ Volver al menú principal\n\nEscribí el número de la opción.`;
+          updateSession(userPhone, 'premium_management');
+        } else {
+          statsModule.trackModuleAccess(db, userPhone, 'settings');
+          response = '⚙️ *Configuración general*\n\nPronto vas a poder administrar preferencias generales desde aquí.\nPor ahora, configura cada módulo desde sus propios menús.\n\nEscribe *menu* para volver al inicio.';
+        }
         break;
+      }
       case '10':
       case '0':
         statsModule.trackModuleAccess(db, userPhone, 'help');
         response = 'ℹ️ *Ayuda*\n\nPuedes interactuar de dos formas:\n\n*📱 Por menús:* Navega con números\n*💬 Por voz:* Habla naturalmente\n\nEjemplos:\n- "Recuérdame mañana comprar pan"\n- "Crea un grupo para el asado"\n- "¿Cuánto debo?"\n\nEscribe *menu* para volver al inicio.\n\n*📝 Reportar problemas:*\n• */feedback* - Dejar comentario\n• */bug* - Reportar error\n• */sugerencia* - Nueva idea\n\n_⚠️ Importante: La sesión se cierra después de 5 min sin actividad._';
         break;
+      case '11': {
+        // Opción 11 solo visible para usuarios Premium (cuando opción 9 es suscripción)
+        const premiumModule = require('./modules/premium-module');
+        const isPremium = premiumModule.isPremiumUser(db, userPhone);
+        
+        if (isPremium) {
+          statsModule.trackModuleAccess(db, userPhone, 'help');
+          response = 'ℹ️ *Ayuda*\n\nPuedes interactuar de dos formas:\n\n*📱 Por menús:* Navega con números\n*💬 Por voz:* Habla naturalmente\n\nEjemplos:\n- "Recuérdame mañana comprar pan"\n- "Crea un grupo para el asado"\n- "¿Cuánto debo?"\n\nEscribe *menu* para volver al inicio.\n\n*📝 Reportar problemas:*\n• */feedback* - Dejar comentario\n• */bug* - Reportar error\n• */sugerencia* - Nueva idea\n\n_⚠️ Importante: La sesión se cierra después de 5 min sin actividad._';
+        } else {
+          response = getMainMenu(userName, userPhone);
+        }
+        break;
+      }
       default:
-        response = getMainMenu(userName);
+        response = getMainMenu(userName, userPhone);
     }
   }
   else if (currentModule === 'weather') {
@@ -4538,21 +4951,39 @@ async function handleMessage(msg) {
     const weatherAPI = require('./modules/weather-module/weather-api');
     
     if (messageText.toLowerCase() === 'menu' || messageText.toLowerCase() === 'menú' || messageText === '0' || messageText.toLowerCase() === 'volver') {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     }
-    // Opción 1: Escribir ciudad manualmente (recomendado)
+    // Opción 1: Compartir ubicación actual (recomendado)
     else if (messageText === '1' || messageText === '1️⃣') {
+      response = '📍 *Compartir Ubicación*\n\nPor favor compartí tu ubicación actual desde WhatsApp:\n\n' +
+        `1. Toca el ícono de 📎 (clip)\n` +
+        `2. Selecciona "Ubicación"\n` +
+        `3. Toca "Compartir ubicación en vivo" o "Enviar ubicación actual"\n\n` +
+        `_💡 Al compartir tu ubicación, el bot la detecta automáticamente y busca el nombre de tu ciudad para darte el pronóstico más preciso._`;
+      // Mantener en módulo weather para que cuando comparta la ubicación, se procese correctamente
+      updateSession(userPhone, 'weather');
+    }
+    // Opción 2: Detectar automáticamente (por IP)
+    else if (messageText === '2' || messageText === '2️⃣') {
+      const forecast = await weatherModule.getWeatherForecast(db, userPhone, userName, {
+        autoDetect: true
+      });
+      response = forecast.message;
+      if (forecast.pendingLocation) {
+        updateSession(userPhone, 'weather_save_location', JSON.stringify({ pendingLocation: forecast.pendingLocation }));
+      } else {
+        updateSession(userPhone, 'weather', null);
+      }
+    }
+    // Opción 3: Escribir ciudad manualmente
+    else if (messageText === '3' || messageText === '3️⃣') {
       response = '🌤️ *Escribir Ciudad*\n\nEscribe el nombre de tu ciudad:\n\n_Ejemplos:_\n• Nombre completo: Buenos Aires, Mendoza, Córdoba\n• Abreviado: bue, mend, cord\n• También podés escribir directamente la ciudad';
       updateSession(userPhone, 'weather_city');
     }
-    // Opción 2: Cambiar de ciudad
-    else if (messageText === '2' || messageText === '2️⃣') {
-      response = '🌤️ *Cambiar Ciudad*\n\nEscribe el nombre de tu nueva ciudad:\n\n_Ejemplo: Mendoza, Buenos Aires, Córdoba, Rosario_';
-      updateSession(userPhone, 'weather_city');
-    }
-    else if (messageText === '3' || messageText === '3️⃣') {
-      response = getMainMenu(userName);
+    // Opción 4: Volver al menú principal
+    else if (messageText === '4' || messageText === '4️⃣') {
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     }
     // Si el usuario escribe una ciudad (más de 2 caracteres)
@@ -4615,7 +5046,7 @@ async function handleMessage(msg) {
     const weatherAPI = require('./modules/weather-module/weather-api');
 
     if (messageText.toLowerCase() === 'menu' || messageText.toLowerCase() === 'menú' || messageText === '0' || messageText.toLowerCase() === 'volver') {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     } else if (messageText && messageText.trim().length > 2) {
       const cityResult = await weatherAPI.getCityCoordinates(messageText.trim());
@@ -4663,7 +5094,7 @@ async function handleMessage(msg) {
       session
     );
     if (currencyResult.exit) {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     } else {
       response = currencyResult.message || currencyModule.buildHelpMessage();
@@ -4681,7 +5112,7 @@ async function handleMessage(msg) {
       response = '✍️ *Ingresar número manualmente*\n\nEscribe el número con código de país. Podés agregar el nombre separando con coma.\n\n_Ejemplos:_\n• 5492611234567\n• Ana,549113334455\n\nEscribe *"volver"* para cancelar.';
       updateSession(userPhone, 'invite_friend_waiting_phone', contextPayload);
     } else if (['3', '3️⃣', 'volver', 'menu', 'menú', 'cancelar'].includes(normalized)) {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     } else {
       response = '❌ Opción no válida.\n\n1️⃣ Compartir contacto\n2️⃣ Escribir número manualmente\n3️⃣ Cancelar\n\nEscribe *"volver"* para regresar al menú.';
@@ -4694,7 +5125,7 @@ async function handleMessage(msg) {
     const inviterPhone = baseContext.inviterPhone || userPhone;
 
     if (['volver', 'menu', 'menú', 'cancelar', '3', '3️⃣'].includes(normalized)) {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     } else if (['2', '2️⃣'].includes(normalized)) {
       response = '✍️ *Ingresar número manualmente*\n\nEscribe el número con código de país. Podés agregar el nombre separando con coma.\n\n_Ejemplos:_\n• 5492611234567\n• Ana,549113334455\n\nEscribe *"volver"* para cancelar.';
@@ -4739,7 +5170,7 @@ async function handleMessage(msg) {
     const inviterPhone = baseContext.inviterPhone || userPhone;
 
     if (['volver', 'menu', 'menú', 'cancelar', '3', '3️⃣'].includes(normalized)) {
-      response = getMainMenu(userName);
+      response = getMainMenu(userName, userPhone);
       updateSession(userPhone, 'main');
     } else if (['1', '1️⃣'].includes(normalized)) {
       response = '📇 *Compartir contacto*\n\nToca el ícono de 📎 y elegí *Contacto* para enviarme el número de tu amigo.\n\nCuando estés listo, envía el contacto o escribe *\"volver\"* para cancelar.';
@@ -5040,14 +5471,14 @@ async function handleMessage(msg) {
           updateSession(userPhone, 'expenses_view_debts', JSON.stringify({ debts: pendingDebts }));
         } else {
           // Volver al menú principal
-          response = getMainMenu(userName);
+          response = getMainMenu(userName, userPhone);
           updateSession(userPhone, 'main');
         }
         break;
       case '4':
         if (hasDebts) {
           // Volver al menú principal (solo aparece si hay deudas)
-          response = getMainMenu(userName);
+          response = getMainMenu(userName, userPhone);
           updateSession(userPhone, 'main');
         } else {
           response = getExpensesMenu(userPhone);
@@ -5082,7 +5513,7 @@ async function handleMessage(msg) {
         response = '❌ Debes agregar al menos un participante.\n\n*1* - Agregar uno por uno\n*2* - Compartir contacto\n*3* - Agregar con formato\n*4* - Listo';
       } else {
         const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
-        response = `✅ Perfecto *${userName}*!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+        response = `✅ Perfecto *${userName}*!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
         updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
       }
     } else {
@@ -5169,7 +5600,7 @@ async function handleMessage(msg) {
       updateSession(userPhone, 'expenses_add_participants', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '3') {
       const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
-      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       response = '❌ Opción no válida.\n\n*1* - Compartir otro contacto\n*2* - Agregar manualmente\n*3* - Terminar';
@@ -5231,7 +5662,7 @@ async function handleMessage(msg) {
       updateSession(userPhone, 'expenses_add_name', JSON.stringify({ groupId, groupName, participants }));
     } else if (messageText === '2') {
       const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
-      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+      response = `✅ Perfecto!\n\nGrupo configurado con ${participants.length} participante(s):\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       response = '❌ Opción no válida.\n\n*1* - Agregar otro participante\n*2* - Terminar';
@@ -5248,7 +5679,7 @@ async function handleMessage(msg) {
         response = '❌ Necesitas agregar al menos un participante.\n\nEnvía *Nombre,Teléfono* o escribe *"cancelar"* para volver.';
       } else {
         const listado = participants.map((p, i) => `${i+1}. ${p.name}`).join('\n');
-        response = `✅ Participantes agregados:\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+        response = `✅ Participantes agregados:\n\n${listado}\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
         updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
       }
     } else if (messageText.toLowerCase() === 'cancelar') {
@@ -5314,7 +5745,7 @@ async function handleMessage(msg) {
               `_Usa la opción 6 para ver detalles de los pagos._`;
           }
           
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
         }
         break;
       }
@@ -5352,7 +5783,7 @@ async function handleMessage(msg) {
         const participants = getGroupParticipants(groupId);
         if (participants.length === 0) {
           response = '❌ El grupo no tiene participantes cargados.';
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
         } else {
           const list = participants.map((p, i) => `${i + 1}. ${p.name} (${p.phone})`).join('\n');
           response = `👥 *Participantes del grupo*\n\n${list}\n\nEscribe el número del participante que querés quitar o *0* para cancelar.`;
@@ -5361,47 +5792,59 @@ async function handleMessage(msg) {
         break;
       }
       case '5': {
-        // Registrar pago
-        const split = calculateSplit(groupId);
-        if (split.transactions.length === 0) {
-          response = '✅ *¡Todo pagado!*\n\nNo hay deudas pendientes. Todos están al día.';
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+        // Avisar pago - Marcar gastos como pagados
+        const summary = await getExpenseSummary(groupId);
+        const unpaidExpenses = summary.expenses.filter(e => !e.is_paid);
+        
+        if (unpaidExpenses.length === 0) {
+          response = '✅ *¡Todo pagado!*\n\nNo hay gastos pendientes de pago.';
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
         } else {
-          // Mostrar transacciones pendientes para que el usuario seleccione cuál registrar
-          // Incluir alias bancario del receptor si está disponible
-          const transactionsList = split.transactions.map((t, i) => {
-            // Normalizar el teléfono explícitamente para asegurar la búsqueda correcta
-            const normalizedToPhone = normalizePhone(t.toPhone);
-            const toAlias = getBankAliasForUser(normalizedToPhone);
-            const toDisplay = toAlias ? `${t.to} (${toAlias})` : t.to;
-            return `${i + 1}. *${t.from}* → *${formatAmount(t.amount)}* → *${toDisplay}*`;
-          }).join('\n');
+          // Mostrar gastos pendientes para que el usuario seleccione cuál marcar como pagado
+          const expensesList = unpaidExpenses.map((e, i) => {
+            return `${i + 1}. ${formatAmount(e.amount)} ${e.currency || 'ARS'} - ${e.description}\n   💳 Pagó: ${e.payer_name || 'N/A'}`;
+          }).join('\n\n');
           
-          response = `💵 *Registrar pago realizado*\n\n` +
-            `*Transacciones pendientes:*\n\n${transactionsList}\n\n` +
-            `Escribe el número de la transacción que querés registrar como pagada, o *0* para cancelar.`;
-          updateSession(userPhone, 'expenses_register_payment', JSON.stringify({ groupId, groupName, transactions: split.transactions }));
+          response = `💵 *Avisar pago realizado*\n\n` +
+            `*Gastos pendientes:*\n\n${expensesList}\n\n` +
+            `Escribe el número del gasto que querés marcar como pagado, o *0* para cancelar.`;
+          updateSession(userPhone, 'expenses_notify_payment', JSON.stringify({ groupId, groupName, expenses: unpaidExpenses }));
         }
         break;
       }
       case '6': {
-        // Ver pagos realizados
-        const payments = getPaymentsByGroup(groupId);
-        if (payments.length === 0) {
-          response = '📋 No hay pagos registrados todavía.\n\nUsa la opción *5* para registrar un pago realizado.';
+        // Ver gastos pagados y pendientes
+        const summary = await getExpenseSummary(groupId);
+        const paidExpenses = summary.expenses.filter(e => e.is_paid);
+        const unpaidExpenses = summary.expenses.filter(e => !e.is_paid);
+        
+        if (paidExpenses.length === 0 && unpaidExpenses.length === 0) {
+          response = '📋 No hay gastos registrados todavía.';
         } else {
-          const paymentsList = payments.map((p, i) => {
-            // Obtener alias del receptor si no está en el pago registrado
-            const toAlias = p.bank_alias || getBankAliasForUser(p.to_user_phone);
-            const toDisplay = toAlias ? `${p.to_user_name || p.to_user_phone} (${toAlias})` : (p.to_user_name || p.to_user_phone);
-            
-            return `${i + 1}. *${p.from_user_name || p.from_user_phone}* pagó *${formatAmount(p.amount)}* a *${toDisplay}*\n` +
-              `   📅 ${new Date(p.payment_date).toLocaleDateString('es-AR')}${p.payment_method ? ` • ${p.payment_method}` : ''}${p.notes ? `\n   📝 ${p.notes}` : ''}`;
-          }).join('\n\n');
+          response = `💵 *Estado de Gastos*\n\n`;
           
-          response = `💵 *Pagos realizados*\n\n${paymentsList}`;
+          if (unpaidExpenses.length > 0) {
+            response += `⏳ *Gastos pendientes (${unpaidExpenses.length}):*\n\n`;
+            unpaidExpenses.forEach((e, i) => {
+              response += `${i + 1}. ${formatAmount(e.amount)} ${e.currency || 'ARS'} - ${e.description}\n`;
+              response += `   💳 Pagó: ${e.payer_name || 'N/A'}\n\n`;
+            });
+          }
+          
+          if (paidExpenses.length > 0) {
+            response += `\n✅ *Gastos pagados (${paidExpenses.length}):*\n\n`;
+            paidExpenses.forEach((e, i) => {
+              response += `${i + 1}. ${formatAmount(e.amount)} ${e.currency || 'ARS'} - ${e.description}\n`;
+              response += `   💳 Pagó: ${e.payer_name || 'N/A'}\n`;
+              response += `   ✅ Marcado como pagado por: ${e.paid_by || 'N/A'}\n`;
+              if (e.paid_at) {
+                response += `   📅 Fecha: ${new Date(e.paid_at).toLocaleDateString('es-AR')}\n`;
+              }
+              response += `\n`;
+            });
+          }
         }
-        response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+        response += `\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
         break;
       }
       case '7': {
@@ -5432,16 +5875,68 @@ async function handleMessage(msg) {
         }
         break;
       }
-      case '8':
+      case '8': {
+        // Cerrar o reabrir grupo
+        const group = db.prepare('SELECT is_closed FROM expense_groups WHERE id = ?').get(groupId);
+        const isClosed = group && group.is_closed === 1;
+        
+        if (isClosed) {
+          // Reabrir grupo
+          db.prepare('UPDATE expense_groups SET is_closed = 0, closed_at = NULL WHERE id = ?').run(groupId);
+          response = `✅ *Grupo reabierto*\n\nEl grupo "${groupName}" ha sido reabierto. Ahora podés agregar nuevos gastos y pagos.\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
+        } else {
+          // Cerrar grupo
+          response = `🔒 *Cerrar grupo*\n\n¿Querés cerrar el grupo "${groupName}"?\n\nUn grupo cerrado:\n• No permite agregar nuevos gastos\n• No permite agregar nuevos pagos\n• Mantiene el historial completo\n• Puede ser reabierto en cualquier momento\n\n1️⃣ Sí, cerrar grupo\n2️⃣ No, volver`;
+          updateSession(userPhone, 'expenses_close_confirm', JSON.stringify({ groupId, groupName }));
+        }
+        break;
+      }
+      case '9': {
+        // Compartir grupo en WhatsApp
+        const shareResult = await shareExpenseGroupInWhatsApp(client, groupId, userPhone);
+        response = shareResult.message;
+        if (!shareResult.error) {
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
+        } else {
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
+        }
+        break;
+      }
+      case '10':
+      case '🔟': {
+        // Exportar resumen a PDF
+        const pdfResult = await exportExpenseGroupToPDF(groupId, userPhone);
+        if (pdfResult.success) {
+          try {
+            const userChatId = `${normalizePhone(userPhone)}@c.us`;
+            await client.sendMessage(userChatId, {
+              document: pdfResult.filePath,
+              mimetype: 'application/pdf',
+              filename: pdfResult.fileName
+            });
+            response = `✅ *Resumen exportado*\n\nEl PDF del grupo "${groupName}" fue enviado a tu chat privado.`;
+          } catch (error) {
+            console.error('[ERROR] Error enviando PDF:', error);
+            response = `❌ Error al enviar el PDF: ${error.message}`;
+          }
+        } else {
+          response = `❌ ${pdfResult.error}`;
+        }
+        response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
+        break;
+      }
+      case '11':
+      case '1️⃣1️⃣':
         response = `⚠️ *Eliminar grupo*\n\n¿Seguro que querés eliminar "${groupName}"? Esta acción no se puede deshacer.\n\n1️⃣ Sí, eliminar\n2️⃣ No, volver`;
         updateSession(userPhone, 'expenses_delete_confirm', JSON.stringify({ groupId, groupName }));
         break;
-      case '9':
+      case '12':
+      case '1️⃣2️⃣':
         response = getExpensesMenu(userPhone);
         updateSession(userPhone, 'expenses');
         break;
       default:
-        response = buildExpensesManageMenu(groupName, userPhone);
+        response = buildExpensesManageMenu(groupName, userPhone, groupId);
     }
   }
   else if (currentModule === 'expenses_add_expense') {
@@ -5476,7 +5971,7 @@ async function handleMessage(msg) {
         }
       }
     } else if (messageText.toLowerCase() === 'ver') {
-      response = `${buildExpensesManageMenu(groupName, userPhone)}`;
+      response = `${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       response = '❌ Formato incorrecto.\n\nUsa: *Monto | Descripción | Quién pagó*\n\nEjemplo:\n3500 | Bebidas | María';
@@ -5517,7 +6012,7 @@ async function handleMessage(msg) {
       } else {
         const selected = groups[index];
         const groupName = getExpenseGroupName(selected.id);
-        response = buildExpensesManageMenu(groupName, userPhone);
+        response = buildExpensesManageMenu(groupName, userPhone, selected.id);
         updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId: selected.id, groupName }));
       }
     }
@@ -5559,7 +6054,7 @@ async function handleMessage(msg) {
     const participants = context.participants || [];
     
     if (['0', 'menu', 'menú', 'volver'].includes(messageText.toLowerCase())) {
-      response = buildExpensesManageMenu(groupName, userPhone);
+      response = buildExpensesManageMenu(groupName, userPhone, groupId);
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       const index = parseInt(messageText, 10) - 1;
@@ -5570,13 +6065,13 @@ async function handleMessage(msg) {
         const removal = removeGroupParticipant(groupId, participant.id);
         if (!removal.success) {
           response = `❌ ${removal.message}`;
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
           updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
         } else {
           const updatedParticipants = getGroupParticipants(groupId);
           if (updatedParticipants.length === 0) {
             response = '✅ Participante eliminado. El grupo quedó sin participantes.';
-            response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+            response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
             updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
           } else {
             const list = updatedParticipants.map((p, i) => `${i + 1}. ${p.name} (${p.phone})`).join('\n');
@@ -5591,6 +6086,23 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
           }
         }
       }
+    }
+  }
+  else if (currentModule === 'expenses_close_confirm') {
+    const context = JSON.parse(session.context || '{}');
+    const groupId = context.groupId;
+    const groupName = context.groupName || getExpenseGroupName(groupId);
+    
+    if (messageText === '1' || messageText === '1️⃣') {
+      // Cerrar el grupo
+      db.prepare('UPDATE expense_groups SET is_closed = 1, closed_at = CURRENT_TIMESTAMP WHERE id = ?').run(groupId);
+      response = `🔒 *Grupo cerrado*\n\nEl grupo "${groupName}" ha sido cerrado.\n\n• No se pueden agregar nuevos gastos\n• No se pueden agregar nuevos pagos\n• El historial se mantiene intacto\n• Podés reabrirlo en cualquier momento desde el menú\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
+    } else if (messageText === '2' || messageText === '2️⃣' || ['menu', 'menú', 'volver'].includes(messageText.toLowerCase())) {
+      response = buildExpensesManageMenu(groupName, userPhone, groupId);
+      updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
+    } else {
+      response = '❌ Opción inválida. Responde con 1 para cerrar el grupo o 2 para cancelar.';
     }
   }
   else if (currentModule === 'expenses_delete_confirm') {
@@ -5608,7 +6120,7 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
       response += `\n\n${getExpensesMenu(userPhone)}`;
       updateSession(userPhone, 'expenses');
     } else if (messageText === '2' || ['menu', 'menú', 'volver'].includes(messageText.toLowerCase())) {
-      response = buildExpensesManageMenu(groupName, userPhone);
+      response = buildExpensesManageMenu(groupName, userPhone, groupId);
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       response = '❌ Opción inválida. Responde con 1 para eliminar el grupo o 2 para cancelar.';
@@ -5683,7 +6195,7 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
     const groupName = context.groupName || getExpenseGroupName(groupId);
     
     if (messageText.toLowerCase() === 'cancelar') {
-      response = buildExpensesManageMenu(groupName, userPhone);
+      response = buildExpensesManageMenu(groupName, userPhone, groupId);
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
       // Solo se requiere el alias
@@ -5708,7 +6220,7 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
         }
         
         if (result.success) {
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
+          response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
           updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
         }
       }
@@ -5721,7 +6233,7 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
     const accounts = context.accounts || [];
     
     if (messageText.toLowerCase() === 'cancelar') {
-      response = buildExpensesManageMenu(groupName, userPhone);
+      response = buildExpensesManageMenu(groupName, userPhone, groupId);
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else if (messageText.toLowerCase() === 'agregar') {
       response = `💳 *Agregar cuenta bancaria*\n\n` +
@@ -5813,66 +6325,41 @@ Escribe otro número para quitar otro participante o *0* para volver.`;
       response = '❌ Opción inválida. Escribe *eliminar*, *default*, o *cancelar*.';
     }
   }
-  else if (currentModule === 'expenses_register_payment') {
+  else if (currentModule === 'expenses_notify_payment') {
     const context = JSON.parse(session.context || '{}');
     const groupId = context.groupId;
     const groupName = context.groupName || getExpenseGroupName(groupId);
-    const transactions = context.transactions || [];
+    const expenses = context.expenses || [];
     
     if (messageText === '0' || messageText.toLowerCase() === 'cancelar') {
-      response = buildExpensesManageMenu(groupName, userPhone);
+      response = buildExpensesManageMenu(groupName, userPhone, groupId);
       updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
     } else {
-      const transactionIndex = parseInt(messageText, 10) - 1;
-      if (Number.isNaN(transactionIndex) || transactionIndex < 0 || transactionIndex >= transactions.length) {
-        response = '❌ Opción inválida. Escribe el número de la transacción que querés registrar o *0* para cancelar.';
+      const expenseIndex = parseInt(messageText, 10) - 1;
+      if (Number.isNaN(expenseIndex) || expenseIndex < 0 || expenseIndex >= expenses.length) {
+        response = '❌ Opción inválida. Escribe el número del gasto que querés marcar como pagado o *0* para cancelar.';
       } else {
-        const transaction = transactions[transactionIndex];
+        const expense = expenses[expenseIndex];
         
-        // Verificar que el usuario sea el deudor (from)
-        const normalizedUserPhone = normalizePhone(userPhone);
-        const normalizedFromPhone = normalizePhone(transaction.fromPhone);
+        // Marcar el gasto como pagado
+        const user = db.prepare('SELECT name FROM users WHERE phone = ?').get(userPhone);
+        const userName = user?.name || 'Usuario';
         
-        if (normalizedUserPhone !== normalizedFromPhone) {
-          response = `❌ Solo podés registrar pagos que vos hayas realizado.\n\n` +
-            `Esta transacción es de *${transaction.from}* a *${transaction.to}*.\n\n` +
-            `_Si sos *${transaction.to}*, esperá a que *${transaction.from}* registre el pago._`;
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
-          updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
-        } else {
-          // Registrar el pago
-          const defaultAccount = getDefaultBankAccount(userPhone);
-          const paymentResult = addPayment(
-            groupId,
-            transaction.fromPhone,
-            transaction.toPhone,
-            transaction.amount,
-            'Transferencia',
-            defaultAccount ? defaultAccount.id : null,
-            null
-          );
-          
-          if (paymentResult.success) {
-            response = `✅ *Pago registrado*\n\n` +
-              `💵 Monto: ${formatAmount(transaction.amount)}\n` +
-              `👤 De: ${transaction.from}\n` +
-              `👤 Para: ${transaction.to}\n\n` +
-              `El cálculo de gastos se actualizará automáticamente.`;
-            
-            // Actualizar el cálculo para mostrar el nuevo estado
-            const updatedSplit = calculateSplit(groupId);
-            if (updatedSplit.transactions.length === 0) {
-              response += `\n\n✅ *¡Todo pagado!* No hay más deudas pendientes.`;
-            } else {
-              response += `\n\n💸 *Transferencias restantes:* ${updatedSplit.transactions.length}`;
-            }
-          } else {
-            response = `❌ No se pudo registrar el pago: ${paymentResult.error}`;
-          }
-          
-          response += `\n\n${buildExpensesManageMenu(groupName, userPhone)}`;
-          updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
-        }
+        db.prepare(`
+          UPDATE expenses 
+          SET is_paid = 1, paid_at = CURRENT_TIMESTAMP, paid_by = ?
+          WHERE id = ?
+        `).run(userName, expense.id);
+        
+        response = `✅ *Gasto marcado como pagado*\n\n` +
+          `💵 ${formatAmount(expense.amount)} ${expense.currency || 'ARS'} - ${expense.description}\n` +
+          `💳 Pagó: ${expense.payer_name || 'N/A'}\n` +
+          `✅ Marcado como pagado por: ${userName}\n\n` +
+          `⚠️ *Nota:* Este aviso es solo de referencia. El gasto seguirá siendo considerado en el cálculo de deudas.\n\n` +
+          `_El cálculo de deudas se mantiene igual para que el usuario que pagó pueda cobrar su parte._`;
+        
+        response += `\n\n${buildExpensesManageMenu(groupName, userPhone, groupId)}`;
+        updateSession(userPhone, 'expenses_manage', JSON.stringify({ groupId, groupName }));
       }
     }
   }
@@ -6273,6 +6760,45 @@ try {
   const scheduledMessagesService = require('./modules/scheduled-messages/service');
   scheduledMessagesService.startService(client, db);
   console.log('🗓️ Servicio de mensajes programados iniciado');
+
+  // Servicio para procesar notificaciones de Premium
+  setInterval(async () => {
+    try {
+      const notifications = db.prepare(`
+        SELECT id, user_phone, notification_type
+        FROM premium_notifications_queue
+        WHERE processed = 0
+        ORDER BY created_at ASC
+        LIMIT 10
+      `).all();
+
+      if (notifications.length > 0) {
+        const premiumNotifications = require('./modules/premium-module/notifications');
+        
+        for (const notification of notifications) {
+          try {
+            if (notification.notification_type === 'payment_approved') {
+              await premiumNotifications.notifyPaymentApproved(client, db, notification.user_phone);
+            } else if (notification.notification_type === 'payment_rejected') {
+              await premiumNotifications.notifyPaymentRejected(client, db, notification.user_phone);
+            }
+            
+            // Marcar como procesada
+            db.prepare(`
+              UPDATE premium_notifications_queue
+              SET processed = 1, processed_at = CURRENT_TIMESTAMP
+              WHERE id = ?
+            `).run(notification.id);
+          } catch (error) {
+            console.error(`[ERROR] Error procesando notificación ${notification.id}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('[ERROR] Error en servicio de notificaciones Premium:', error);
+    }
+  }, 30000); // Cada 30 segundos
+  console.log('💎 Servicio de notificaciones Premium iniciado');
 } catch (error) {
   console.warn('[WARN] No se pudo iniciar el servicio de mensajes programados:', error.message);
 }
@@ -6628,9 +7154,9 @@ function removeGroupParticipant(groupId, participantId) {
   return { success: true, participant };
 }
 
-function buildExpensesManageMenu(groupName = '', userPhone = null) {
+function buildExpensesManageMenu(groupName = '', userPhone = null, groupId = null) {
   const header = groupName ? `💰 *${groupName}*` : '💰 *Dividir Gastos*';
-  let menu = `${header}\n\n1. Agregar gasto\n2. Ver resumen\n3. Calcular división\n4. Ver/Quitar participantes\n5. Registrar pago\n6. Ver pagos realizados`;
+  let menu = `${header}\n\n1. Agregar gasto\n2. Ver resumen\n3. Calcular división\n4. Ver/Quitar participantes\n5. Avisar pago\n6. Ver pagos realizados`;
   
   // Agregar opciones de cuentas bancarias si el usuario tiene acceso
   if (userPhone) {
@@ -6644,7 +7170,23 @@ function buildExpensesManageMenu(groupName = '', userPhone = null) {
     menu += `\n7. Agregar cuenta bancaria`;
   }
   
-  menu += `\n8. Eliminar grupo\n9. Volver al menú de gastos\n\n💡 Escribí *"menu"* para volver al inicio.`;
+  // Verificar si el grupo está cerrado
+  let isClosed = false;
+  if (groupId) {
+    const group = db.prepare('SELECT is_closed FROM expense_groups WHERE id = ?').get(groupId);
+    isClosed = group && group.is_closed === 1;
+  }
+  
+  if (isClosed) {
+    menu += `\n8. Reabrir grupo`;
+  } else {
+    menu += `\n8. Cerrar grupo`;
+  }
+  
+  menu += `\n9. Compartir grupo en WhatsApp\n`;
+  menu += `🔟 Exportar resumen (PDF)\n`;
+  menu += `1️⃣1️⃣ Eliminar grupo\n`;
+  menu += `1️⃣2️⃣ Volver al menú de gastos\n\n💡 Escribí *"menu"* para volver al inicio.`;
   return menu;
 }
 
@@ -6653,6 +7195,244 @@ function getExpenseGroupName(groupId) {
     SELECT name FROM expense_groups WHERE id = ?
   `).get(groupId);
   return row ? row.name : 'Grupo de gastos';
+}
+
+async function shareExpenseGroupInWhatsApp(client, groupId, userPhone) {
+  try {
+    const group = db.prepare(`
+      SELECT id, name, created_at, is_closed, closed_at, currency
+      FROM expense_groups
+      WHERE id = ?
+    `).get(groupId);
+    
+    if (!group) {
+      return { error: true, message: '❌ Grupo no encontrado.' };
+    }
+    
+    const summary = await getExpenseSummary(groupId);
+    const split = calculateSplit(groupId);
+    const payments = getPaymentsByGroup(groupId);
+    const participants = getGroupParticipants(groupId);
+    
+    // Obtener información del creador
+    const creator = db.prepare('SELECT name FROM users WHERE phone = ?').get(userPhone);
+    const creatorName = creator?.name || 'Usuario';
+    
+    // Construir mensaje de resumen
+    let shareMessage = `📋 *Resumen de Gastos: ${group.name}*\n\n`;
+    shareMessage += `👤 Creado por: *${creatorName}*\n`;
+    shareMessage += `📅 Fecha: ${new Date(group.created_at).toLocaleDateString('es-AR')}\n`;
+    if (group.is_closed === 1) {
+      shareMessage += `🔒 Estado: *Cerrado*\n`;
+      if (group.closed_at) {
+        shareMessage += `📅 Cerrado: ${new Date(group.closed_at).toLocaleDateString('es-AR')}\n`;
+      }
+    } else {
+      shareMessage += `✅ Estado: *Activo*\n`;
+    }
+    shareMessage += `💱 Moneda: ${group.currency || 'ARS'}\n\n`;
+    
+    shareMessage += `💰 *Total gastado:* ${formatAmount(summary.total)} ${group.currency || 'ARS'}\n`;
+    shareMessage += `👥 *Participantes:* ${participants.length}\n`;
+    shareMessage += `📊 *Por persona:* ${formatAmount(summary.perPerson)} ${group.currency || 'ARS'}\n\n`;
+    
+    if (summary.expenses.length > 0) {
+      shareMessage += `*Gastos registrados:*\n\n`;
+      summary.expenses.forEach((e, i) => {
+        shareMessage += `${i + 1}. ${formatAmount(e.amount)} ${e.currency || group.currency || 'ARS'} - ${e.description}\n`;
+        shareMessage += `   💳 Pagó: ${e.payer_name || 'N/A'}\n\n`;
+      });
+    }
+    
+    if (payments.length > 0) {
+      shareMessage += `\n💵 *Pagos realizados:*\n\n`;
+      payments.forEach((p, i) => {
+        const toAlias = p.bank_alias || getBankAliasForUser(p.to_user_phone);
+        const toDisplay = toAlias ? `${p.to_user_name || p.to_user_phone} (${toAlias})` : (p.to_user_name || p.to_user_phone);
+        shareMessage += `${i + 1}. *${p.from_user_name || p.from_user_phone}* pagó *${formatAmount(p.amount)} ${p.currency || group.currency || 'ARS'}* a *${toDisplay}*\n`;
+        shareMessage += `   📅 ${new Date(p.payment_date).toLocaleDateString('es-AR')}${p.payment_method ? ` • ${p.payment_method}` : ''}\n\n`;
+      });
+    }
+    
+    if (split.transactions.length > 0) {
+      shareMessage += `\n💸 *Transferencias pendientes:*\n\n`;
+      split.transactions.forEach((t, i) => {
+        const toAlias = getBankAliasForUser(t.toPhone);
+        const toDisplay = toAlias ? `${t.to} (${toAlias})` : t.to;
+        shareMessage += `${i + 1}. *${t.from}* → *${formatAmount(t.amount)} ${group.currency || 'ARS'}* → *${toDisplay}*\n\n`;
+      });
+    } else {
+      shareMessage += `\n✅ *¡Todo pagado!* No hay deudas pendientes.\n\n`;
+    }
+    
+    shareMessage += `\n─\n`;
+    shareMessage += `📱 *Compartido desde Milo Bot*\n`;
+    shareMessage += `💡 Para gestionar este grupo, escribí "gastos" a Milo`;
+    
+    // Enviar mensaje al usuario que comparte
+    const userChatId = `${normalizePhone(userPhone)}@c.us`;
+    await client.sendMessage(userChatId, shareMessage);
+    
+    return { 
+      error: false, 
+      message: `✅ *Resumen compartido*\n\nEl resumen del grupo "${group.name}" fue enviado a tu chat privado.\n\nPodés copiar y compartir el mensaje con quien quieras.` 
+    };
+  } catch (error) {
+    console.error('[ERROR] Error compartiendo grupo:', error);
+    return { 
+      error: true, 
+      message: `❌ No se pudo compartir el grupo: ${error.message}` 
+    };
+  }
+}
+
+async function exportExpenseGroupToPDF(groupId, userPhone) {
+  const fs = require('fs');
+  const path = require('path');
+  const PDFDocument = require('pdfkit');
+  
+  try {
+    const group = db.prepare(`
+      SELECT id, name, created_at, is_closed, closed_at, currency
+      FROM expense_groups
+      WHERE id = ?
+    `).get(groupId);
+    
+    if (!group) {
+      return { success: false, error: 'Grupo no encontrado.' };
+    }
+    
+    const summary = await getExpenseSummary(groupId);
+    const split = calculateSplit(groupId);
+    const payments = getPaymentsByGroup(groupId);
+    const participants = getGroupParticipants(groupId);
+    
+    // Obtener información del creador
+    const creator = db.prepare('SELECT name FROM users WHERE phone = ?').get(userPhone);
+    const creatorName = creator?.name || 'Usuario';
+    
+    // Crear directorio de exports si no existe
+    const exportsDir = path.join(__dirname, 'data', 'exports');
+    if (!fs.existsSync(exportsDir)) {
+      fs.mkdirSync(exportsDir, { recursive: true });
+    }
+    
+    // Nombre del archivo
+    const fileName = `resumen_${group.name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.pdf`;
+    const filePath = path.join(exportsDir, fileName);
+    
+    // Crear documento PDF
+    const doc = new PDFDocument({ margin: 50 });
+    const stream = fs.createWriteStream(filePath);
+    doc.pipe(stream);
+    
+    // Encabezado
+    doc.fontSize(20).text(`Resumen de Gastos: ${group.name}`, { align: 'center' });
+    doc.moveDown();
+    
+    // Información del grupo
+    doc.fontSize(12);
+    doc.text(`Creado por: ${creatorName}`);
+    doc.text(`Fecha: ${new Date(group.created_at).toLocaleDateString('es-AR')}`);
+    if (group.is_closed === 1) {
+      doc.text(`Estado: Cerrado`);
+      if (group.closed_at) {
+        doc.text(`Cerrado: ${new Date(group.closed_at).toLocaleDateString('es-AR')}`);
+      }
+    } else {
+      doc.text(`Estado: Activo`);
+    }
+    doc.text(`Moneda: ${group.currency || 'ARS'}`);
+    doc.moveDown();
+    
+    // Resumen general
+    doc.fontSize(14).text('Resumen General', { underline: true });
+    doc.fontSize(12);
+    doc.text(`Total gastado: ${formatAmount(summary.total)} ${group.currency || 'ARS'}`);
+    doc.text(`Participantes: ${participants.length}`);
+    doc.text(`Por persona: ${formatAmount(summary.perPerson)} ${group.currency || 'ARS'}`);
+    doc.moveDown();
+    
+    // Gastos registrados
+    if (summary.expenses.length > 0) {
+      doc.fontSize(14).text('Gastos Registrados', { underline: true });
+      doc.moveDown(0.5);
+      summary.expenses.forEach((e, i) => {
+        const status = e.is_paid ? '✅ Pagado' : '⏳ Pendiente';
+        doc.fontSize(10);
+        doc.text(`${i + 1}. ${formatAmount(e.amount)} ${e.currency || group.currency || 'ARS'} - ${e.description}`, { continued: false });
+        doc.text(`   Pagó: ${e.payer_name || 'N/A'} | ${status}`, { indent: 20 });
+        if (e.is_paid && e.paid_by) {
+          doc.text(`   Marcado como pagado por: ${e.paid_by}`, { indent: 20 });
+          if (e.paid_at) {
+            doc.text(`   Fecha de pago: ${new Date(e.paid_at).toLocaleDateString('es-AR')}`, { indent: 20 });
+          }
+        }
+        doc.moveDown(0.3);
+      });
+      doc.moveDown();
+    }
+    
+    // Pagos realizados (si hay)
+    if (payments.length > 0) {
+      doc.fontSize(14).text('Pagos Realizados', { underline: true });
+      doc.moveDown(0.5);
+      payments.forEach((p, i) => {
+        const toAlias = p.bank_alias || getBankAliasForUser(p.to_user_phone);
+        const toDisplay = toAlias ? `${p.to_user_name || p.to_user_phone} (${toAlias})` : (p.to_user_name || p.to_user_phone);
+        doc.fontSize(10);
+        doc.text(`${i + 1}. ${p.from_user_name || p.from_user_phone} pagó ${formatAmount(p.amount)} ${p.currency || group.currency || 'ARS'} a ${toDisplay}`);
+        doc.text(`   Fecha: ${new Date(p.payment_date).toLocaleDateString('es-AR')}${p.payment_method ? ` | Método: ${p.payment_method}` : ''}`, { indent: 20 });
+        if (p.notes) {
+          doc.text(`   Notas: ${p.notes}`, { indent: 20 });
+        }
+        doc.moveDown(0.3);
+      });
+      doc.moveDown();
+    }
+    
+    // Transferencias pendientes
+    if (split.transactions.length > 0) {
+      doc.fontSize(14).text('Transferencias Pendientes', { underline: true });
+      doc.moveDown(0.5);
+      split.transactions.forEach((t, i) => {
+        const toAlias = getBankAliasForUser(t.toPhone);
+        const toDisplay = toAlias ? `${t.to} (${toAlias})` : t.to;
+        doc.fontSize(10);
+        doc.text(`${i + 1}. ${t.from} → ${formatAmount(t.amount)} ${group.currency || 'ARS'} → ${toDisplay}`);
+        doc.moveDown(0.3);
+      });
+    } else {
+      doc.fontSize(14).text('✅ ¡Todo pagado!', { underline: true });
+      doc.fontSize(12);
+      doc.text('No hay deudas pendientes.');
+    }
+    
+    // Pie de página
+    doc.moveDown(2);
+    doc.fontSize(8).text('Generado por Milo Bot', { align: 'center' });
+    doc.text(new Date().toLocaleString('es-AR'), { align: 'center' });
+    
+    // Finalizar PDF
+    doc.end();
+    
+    // Esperar a que el stream termine
+    return new Promise((resolve, reject) => {
+      stream.on('finish', () => {
+        resolve({
+          success: true,
+          filePath: filePath,
+          fileName: fileName
+        });
+      });
+      stream.on('error', (error) => {
+        reject({ success: false, error: error.message });
+      });
+    });
+  } catch (error) {
+    console.error('[ERROR] Error exportando a PDF:', error);
+    return { success: false, error: error.message };
+  }
 }
 
 function getMotivationalPhrase() {

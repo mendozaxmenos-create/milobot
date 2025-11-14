@@ -265,5 +265,168 @@ if (require.main === module) {
   startDashboard();
 }
 
+// ============================================
+// WEBHOOK DE MERCADOPAGO
+// ============================================
+
+// Endpoint para recibir notificaciones de MercadoPago
+app.post('/api/webhook/mercadopago', express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const mercadoPagoIntegration = require('../modules/mercadopago-integration');
+    const xSignature = req.headers['x-signature'];
+    const xRequestId = req.headers['x-request-id'];
+    
+    // Parsear el body
+    let data;
+    try {
+      data = JSON.parse(req.body.toString());
+    } catch (e) {
+      data = req.body;
+    }
+    
+    const dataId = data?.data?.id || data?.id;
+    
+    // Verificar firma del webhook (en desarrollo, se omite)
+    if (!mercadoPagoIntegration.verifyWebhookSignature(xSignature, xRequestId, dataId)) {
+      console.warn('[WARN] Webhook de MercadoPago con firma inválida');
+      return res.status(401).json({ error: 'Invalid signature' });
+    }
+    
+    console.log('[INFO] Webhook de MercadoPago recibido:', JSON.stringify(data, null, 2));
+    
+    // Obtener información del pago
+    if (data.type === 'payment' && data.data?.id) {
+      const paymentId = data.data.id;
+      const paymentInfo = await mercadoPagoIntegration.getPaymentInfo(paymentId);
+      
+      if (paymentInfo.success && paymentInfo.payment) {
+        const payment = paymentInfo.payment;
+        const externalRef = payment.externalReference || '';
+        
+        // Extraer user_phone del external_reference (formato: premium_USERPHONE_TIMESTAMP)
+        const match = externalRef.match(/^premium_(.+?)_(\d+)$/);
+        if (!match) {
+          console.warn('[WARN] External reference no válido:', externalRef);
+          return res.status(400).json({ error: 'Invalid external reference' });
+        }
+        
+        const userPhone = match[1];
+        
+        // Buscar suscripción pendiente
+        const subscription = db.prepare(`
+          SELECT id, user_phone, plan_type, status, amount
+          FROM subscriptions
+          WHERE user_phone = ? AND status = 'pending'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `).get(userPhone);
+        
+        if (!subscription) {
+          console.warn('[WARN] No se encontró suscripción pendiente para:', userPhone);
+          return res.status(404).json({ error: 'Subscription not found' });
+        }
+        
+        // Registrar transacción
+        db.prepare(`
+          INSERT INTO payment_transactions (
+            user_phone, subscription_id, payment_provider, payment_id,
+            amount, currency, status, payment_method
+          ) VALUES (?, ?, 'mercadopago', ?, ?, 'ARS', ?, ?)
+        `).run(
+          userPhone,
+          subscription.id,
+          payment.id.toString(),
+          payment.transactionAmount,
+          payment.status,
+          payment.paymentMethodId || 'unknown'
+        );
+        
+        // Actualizar suscripción según el estado del pago
+        if (payment.status === 'approved') {
+          // Activar Premium
+          const now = new Date();
+          const startDate = new Date(now);
+          let endDate = new Date(now);
+          
+          if (subscription.plan_type === 'monthly') {
+            endDate.setMonth(endDate.getMonth() + 1);
+          } else if (subscription.plan_type === 'yearly') {
+            endDate.setFullYear(endDate.getFullYear() + 1);
+          }
+          
+          // Actualizar suscripción
+          db.prepare(`
+            UPDATE subscriptions
+            SET status = 'active',
+                start_date = ?,
+                end_date = ?,
+                renewal_date = ?,
+                payment_id = ?,
+                payment_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(
+            startDate.toISOString(),
+            endDate.toISOString(),
+            endDate.toISOString(),
+            payment.id.toString(),
+            payment.status,
+            subscription.id
+          );
+          
+          // Activar Premium en el usuario
+          db.prepare(`
+            UPDATE users
+            SET is_premium = 1
+            WHERE phone = ?
+          `).run(userPhone);
+          
+          console.log(`✅ Premium activado para usuario: ${userPhone}`);
+          
+          // Notificar al usuario por WhatsApp
+          // Necesitamos el cliente de WhatsApp desde index.js
+          // Por ahora, guardamos en una tabla para que index.js lo procese
+          db.prepare(`
+            INSERT OR IGNORE INTO premium_notifications_queue (
+              user_phone, notification_type, created_at
+            ) VALUES (?, 'payment_approved', CURRENT_TIMESTAMP)
+          `).run(userPhone);
+          
+          console.log(`📱 Notificación de Premium activado encolada para: ${userPhone}`);
+          
+        } else if (payment.status === 'rejected' || payment.status === 'cancelled') {
+          // Marcar suscripción como fallida
+          db.prepare(`
+            UPDATE subscriptions
+            SET status = 'failed',
+                payment_id = ?,
+                payment_status = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+          `).run(
+            payment.id.toString(),
+            payment.status,
+            subscription.id
+          );
+          
+          console.log(`❌ Pago rechazado para usuario: ${userPhone}`);
+          
+          // Encolar notificación de pago rechazado
+          db.prepare(`
+            INSERT OR IGNORE INTO premium_notifications_queue (
+              user_phone, notification_type, created_at
+            ) VALUES (?, 'payment_rejected', CURRENT_TIMESTAMP)
+          `).run(userPhone);
+        }
+      }
+    }
+    
+    res.status(200).json({ received: true });
+  } catch (error) {
+    console.error('[ERROR] Error procesando webhook de MercadoPago:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Exportar app y función de inicio para uso en index.js
 module.exports = { app, startDashboard };

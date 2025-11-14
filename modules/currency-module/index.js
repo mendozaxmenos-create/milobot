@@ -3,6 +3,13 @@ const API_BASE_FALLBACK = 'https://open.er-api.com/v6/latest';
 const API_SYMBOLS_ENDPOINT = 'https://api.exchangerate.host/symbols';
 const EXCHANGE_API_KEY = process.env.EXCHANGERATE_API_KEY || process.env.CURRENCY_API_KEY || null;
 const SYMBOL_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+const CONVERSION_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutos (tasas de cambio cambian frecuentemente)
+
+// Caché para conversiones de moneda
+const conversionCache = new Map(); // key: "from:to:date" -> { rate, result, timestamp }
+
+let cachedSymbolsList = null;
+let cachedSymbolsFetchedAt = 0;
 
 const DEFAULT_CURRENCY_NAMES = {
   USD: 'Dólar estadounidense',
@@ -47,9 +54,6 @@ const DEFAULT_CURRENCY_NAMES = {
   BHD: 'Dinar bahreiní',
   NZD: 'Dólar neozelandés'
 };
-
-let cachedSymbolsList = null;
-let cachedSymbolsFetchedAt = 0;
 
 const COUNTRY_TO_CURRENCY = {
   AR: 'ARS',
@@ -117,11 +121,58 @@ function parseConversionRequest(messageText = '') {
 }
 
 async function convertCurrency(amount, from, to) {
+  // Verificar caché (usar fecha actual para agrupar por día)
+  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const cacheKey = `conv:${from}:${to}:${today}`;
+  
+  const cached = conversionCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp) < CONVERSION_CACHE_TTL_MS) {
+    console.log('[CACHE] Conversión obtenida desde caché');
+    // Aplicar el monto al rate cacheado
+    return {
+      rate: cached.rate,
+      result: cached.rate * amount,
+      date: cached.date
+    };
+  }
+  
   try {
-    return await fetchFromPrimary(amount, from, to);
+    const result = await fetchFromPrimary(amount, from, to);
+    
+    // Guardar rate en caché (sin el amount, para reutilizar con diferentes montos)
+    if (result && result.rate) {
+      conversionCache.set(cacheKey, {
+        rate: result.rate,
+        date: result.date,
+        timestamp: Date.now()
+      });
+      
+      // Limpiar caché antiguo periódicamente
+      if (conversionCache.size > 1000) {
+        const now = Date.now();
+        for (const [k, v] of conversionCache.entries()) {
+          if (now - v.timestamp > CONVERSION_CACHE_TTL_MS) {
+            conversionCache.delete(k);
+          }
+        }
+      }
+    }
+    
+    return result;
   } catch (primaryError) {
     if (shouldFallback(primaryError)) {
-      return await fetchFromFallback(amount, from, to);
+      const result = await fetchFromFallback(amount, from, to);
+      
+      // Guardar rate en caché también para fallback
+      if (result && result.rate) {
+        conversionCache.set(cacheKey, {
+          rate: result.rate,
+          date: result.date,
+          timestamp: Date.now()
+        });
+      }
+      
+      return result;
     }
     throw primaryError;
   }
@@ -204,7 +255,7 @@ function shouldFallback(error) {
 }
 
 function buildHelpMessage() {
-  return `💱 *Conversor de monedas*\n\nPodés escribir directamente:\n• convertir 100 usd a ars\n• 50 eur a usd\n• 2500 clp a ars y usd (dos monedas a la vez)\n\nO usa la opción 6️⃣ del menú para ver sugerencias según tu ubicación.\n\n📚 Escribí *"monedas"* para listar las divisas disponibles.\n\nEscribí *"volver"* o *"menu"* para regresar.`;
+  return `💱 *Conversor de monedas*\n\nPodés escribir directamente:\n• convertir 100 usd a ars\n• 50 eur a usd\n• 2500 clp a ars y usd (dos monedas a la vez)\n\nO usa la opción 7️⃣ del menú para ver sugerencias según tu ubicación.\n\n💡 *Detección automática:*\nEl bot detecta automáticamente tu moneda local basándose en tu ubicación compartida o guardada.\n\n📚 Escribí *"monedas"* para listar las divisas disponibles.\n\nEscribí *"volver"* o *"menu"* para regresar.`;
 }
 
 function getUserProfile(db, userPhone) {
@@ -236,13 +287,17 @@ function formatCurrencyNumber(value, fractionDigits = 2) {
 function buildSuggestionsMessage({ localLabel, localCurrency, targets, homeCurrency, hasHomeCurrency }) {
   const lines = [];
   if (localLabel && localCurrency) {
-    lines.push(`📍 Estoy detectando: *${localLabel}* (${localCurrency})`);
+    lines.push(`📍 Detecté tu ubicación: *${localLabel}*\n💱 Moneda local sugerida: *${localCurrency}*`);
+    lines.push(`_💡 Basado en tu ubicación compartida o guardada_`);
+  } else if (localCurrency) {
+    lines.push(`📍 Moneda local detectada: *${localCurrency}*`);
+    lines.push(`_💡 Basado en tu ubicación guardada_`);
   }
   if (homeCurrency) {
-    const sourceNote = hasHomeCurrency ? '' : ' (detectada automáticamente)';
-    lines.push(`🏠 Tu moneda base es: *${homeCurrency}*${sourceNote}`);
+    const sourceNote = hasHomeCurrency ? '' : ' (detectada automáticamente desde tu ubicación)';
+    lines.push(`\n🏠 Tu moneda base es: *${homeCurrency}*${sourceNote}`);
   } else {
-    lines.push('🏠 No configuraste una moneda base. Podés hacerlo con `base ARS`');
+    lines.push('\n🏠 No configuraste una moneda base. Podés hacerlo con `base ARS`');
   }
 
   lines.push('\n✍️ Escribí el monto en tu moneda local y te doy las conversiones sugeridas.');

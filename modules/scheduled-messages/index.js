@@ -237,7 +237,7 @@ function formatDateTimeForSQLite(date) {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
-function createScheduledMessage(db, { creatorPhone, targetChat, targetType, messageBody, sendAt, timezoneOffsetMinutes }) {
+function createScheduledMessage(db, { creatorPhone, targetChat, targetType, messageBody, sendAt, timezoneOffsetMinutes, recurrenceJson = null }) {
   const stmt = db.prepare(`
     INSERT INTO scheduled_messages (
       creator_phone,
@@ -246,8 +246,9 @@ function createScheduledMessage(db, { creatorPhone, targetChat, targetType, mess
       message_body,
       send_at,
       timezone_offset,
-      status
-    ) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+      status,
+      recurrence_json
+    ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
   `);
 
   const offset = timezoneOffsetMinutes ?? getServerOffsetMinutes();
@@ -258,15 +259,61 @@ function createScheduledMessage(db, { creatorPhone, targetChat, targetType, mess
     targetType,
     messageBody,
     sendAt,
-    offset
+    offset,
+    recurrenceJson
   );
 
   return result.lastInsertRowid;
 }
 
+function buildConfirmationMessage(messageId, context, userName, userPhone, targetChat, recurrence) {
+  // Construir mensaje de confirmación con información del destinatario
+  let recipientInfo = 'a vos';
+  if (context.targetType === 'group') {
+    recipientInfo = `a todos los integrantes del grupo *${context.targetName}*`;
+  } else if (context.targetName && context.targetName !== userName) {
+    recipientInfo = `a ${context.targetName}`;
+  } else if (targetChat !== userPhone) {
+    recipientInfo = `a ${targetChat}`;
+  }
+
+  const scheduledDate = new Date(context.scheduledDate);
+  const formattedDate = calendarUtils.formatDateForDisplay(scheduledDate);
+
+  let message = `✅ Mensaje programado (ID #${messageId}).
+
+📅 Se enviará el ${formattedDate} ${recipientInfo}.`;
+
+  if (recurrence) {
+    const recurrenceLabels = {
+      'daily': 'diariamente',
+      'weekly': 'semanalmente',
+      'monthly': 'mensualmente'
+    };
+    message += `\n🔄 Se repetirá ${recurrenceLabels[recurrence.type] || recurrence.type}`;
+    if (recurrence.endDate) {
+      const endDate = new Date(recurrence.endDate);
+      message += ` hasta el ${calendarUtils.formatDateForDisplay(endDate)}`;
+    } else {
+      message += ` (sin fecha de fin)`;
+    }
+  }
+
+  message += `\n📝 Contenido:
+${context.messageBody}
+
+Escribí *"mensajes programados"* para ver tus pendientes o *"cancelar mensaje ${messageId}"* si cambiás de idea.`;
+
+  return {
+    message,
+    nextModule: 'main',
+    context: null
+  };
+}
+
 function listScheduledMessages(db, creatorPhone, limit = MAX_LIST_ITEMS) {
   const stmt = db.prepare(`
-    SELECT id, message_body, send_at, status
+    SELECT id, message_body, send_at, status, recurrence_json
     FROM scheduled_messages
     WHERE creator_phone = ?
       AND status = 'pending'
@@ -326,7 +373,7 @@ function cancelMultipleScheduledMessages(db, creatorPhone, messageIds) {
   return { cancelled, failed };
 }
 
-async function handleFlowMessage({ db, userPhone, userName, messageText, session }) {
+async function handleFlowMessage({ db, userPhone, userName, messageText, session, client = null }) {
   const context = session?.context ? JSON.parse(session.context) : {};
   const stage = context.stage || 'collect_text';
   const lower = (messageText || '').trim().toLowerCase();
@@ -358,6 +405,7 @@ async function handleFlowMessage({ db, userPhone, userName, messageText, session
 1️⃣ A mí mismo
 2️⃣ Compartir contacto
 3️⃣ Escribir número
+4️⃣ Enviar a grupo de WhatsApp
 
 Escribí *cancelar* si querés salir.`,
       nextModule: 'scheduled_message_collect_recipient',
@@ -400,8 +448,65 @@ Escribí *cancelar* si querés salir.`,
       };
     }
 
+    // Si el usuario eligió "4" o "enviar a grupo", listar grupos
+    if (messageText === '4' || messageText === '4️⃣' || lower === 'enviar a grupo' || lower === 'grupo' || lower === 'grupos') {
+      if (!client) {
+        return {
+          message: `❌ No tengo acceso al cliente de WhatsApp en este momento. Por favor, intentá más tarde.\n\nEscribí *cancelar* si querés salir.`,
+          nextModule: session.current_module,
+          context: session.context
+        };
+      }
+
+      try {
+        // Obtener todos los chats (grupos y usuarios)
+        const chats = await client.getChats();
+        
+        // Filtrar solo grupos donde Milo está presente
+        const groups = chats.filter(chat => {
+          return chat.isGroup === true;
+        });
+
+        if (groups.length === 0) {
+          return {
+            message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nAsegurate de que esté agregado al grupo antes de intentar enviar mensajes.\n\nEscribí *cancelar* si querés salir.`,
+            nextModule: session.current_module,
+            context: session.context
+          };
+        }
+
+        // Construir lista de grupos
+        let groupsList = `📱 *Seleccioná un grupo:*\n\n`;
+        groups.forEach((group, index) => {
+          const groupName = group.name || `Grupo ${index + 1}`;
+          groupsList += `${index + 1}️⃣ ${groupName}\n`;
+        });
+        groupsList += `\nEscribí el número del grupo o *cancelar* para volver.`;
+
+        // Guardar grupos en el contexto
+        context.stage = 'select_group';
+        context.availableGroups = groups.map(g => ({
+          id: g.id._serialized,
+          name: g.name || 'Sin nombre'
+        }));
+
+        return {
+          message: groupsList,
+          nextModule: 'scheduled_message_select_group',
+          context: JSON.stringify(context)
+        };
+      } catch (error) {
+        console.error('[ERROR] Error obteniendo grupos:', error);
+        return {
+          message: `❌ Error al obtener los grupos. Por favor, intentá más tarde.\n\nEscribí *cancelar* si querés salir.`,
+          nextModule: session.current_module,
+          context: session.context
+        };
+      }
+    }
+
     return {
-      message: `❌ Opción no válida.\n\n*1* - A mí mismo\n*2* - Compartir contacto\n*3* - Escribir número\n\nEscribí *cancelar* si querés salir.`,
+      message: `❌ Opción no válida.\n\n*1* - A mí mismo\n*2* - Compartir contacto\n*3* - Escribir número\n*4* - Enviar a grupo de WhatsApp\n\nEscribí *cancelar* si querés salir.`,
       nextModule: session.current_module,
       context: session.context
     };
@@ -479,11 +584,78 @@ Escribí *cancelar* si querés salir.`,
       const diffMinutes = tzInfo.offsetMinutes - serverOffset;
       adjustedDate = new Date(scheduledDate.getTime() - diffMinutes * 60000);
     }
-    const sendAtStr = formatDateTimeForSQLite(adjustedDate);
+    
+    context.stage = 'collect_recurrence';
+    context.sendAt = formatDateTimeForSQLite(adjustedDate);
+    context.scheduledDate = scheduledDate.toISOString();
+    context.timezoneOffsetMinutes = tzInfo.offsetMinutes;
+
+    return {
+      message: `¿Querés que este mensaje se repita automáticamente?
+
+1️⃣ No, enviar solo una vez
+2️⃣ Diario (todos los días)
+3️⃣ Semanal (cada semana)
+4️⃣ Mensual (cada mes)
+
+Escribí *cancelar* si querés salir.`,
+      nextModule: 'scheduled_message_collect_recurrence',
+      context: JSON.stringify(context)
+    };
+  }
+
+  if (stage === 'collect_recurrence') {
+    const lower = messageText.toLowerCase().trim();
     const targetChat = context.targetChat || userPhone;
     const targetType = context.targetType || 'user';
     
-    // Normalizar el teléfono del creador antes de guardarlo
+    let recurrence = null;
+    let recurrenceType = null;
+    
+    if (messageText === '1' || messageText === '1️⃣' || lower === 'no' || lower === 'una vez' || lower === 'solo una vez') {
+      // No recurrente, crear mensaje único
+      recurrence = null;
+    } else if (messageText === '2' || messageText === '2️⃣' || lower === 'diario' || lower === 'diariamente' || lower === 'todos los días') {
+      recurrenceType = 'daily';
+    } else if (messageText === '3' || messageText === '3️⃣' || lower === 'semanal' || lower === 'semanalmente' || lower === 'cada semana') {
+      recurrenceType = 'weekly';
+    } else if (messageText === '4' || messageText === '4️⃣' || lower === 'mensual' || lower === 'mensualmente' || lower === 'cada mes') {
+      recurrenceType = 'monthly';
+    } else {
+      return {
+        message: `❌ Opción no válida.
+
+*1* - No, enviar solo una vez
+*2* - Diario
+*3* - Semanal
+*4* - Mensual
+
+Escribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    // Si es recurrente, preguntar fecha de fin (opcional)
+    if (recurrenceType) {
+      context.recurrenceType = recurrenceType;
+      context.stage = 'collect_recurrence_end';
+      
+      return {
+        message: `¿Hasta cuándo querés que se repita?
+
+1️⃣ Sin fecha de fin (se repetirá indefinidamente)
+2️⃣ Hasta una fecha específica
+
+_Ejemplo para opción 2: "2025-12-31" o "fin de año"_
+
+Escribí *cancelar* si querés salir.`,
+        nextModule: 'scheduled_message_collect_recurrence_end',
+        context: JSON.stringify(context)
+      };
+    }
+
+    // Si no es recurrente, crear el mensaje directamente
     const normalizedCreatorPhone = normalizePhone(userPhone);
     if (!normalizedCreatorPhone) {
       return {
@@ -498,31 +670,77 @@ Escribí *cancelar* si querés salir.`,
       targetChat,
       targetType,
       messageBody: context.messageBody,
-      sendAt: sendAtStr,
-      timezoneOffsetMinutes: tzInfo.offsetMinutes
+      sendAt: context.sendAt,
+      timezoneOffsetMinutes: context.timezoneOffsetMinutes,
+      recurrenceJson: null
     });
 
-    // Construir mensaje de confirmación con información del destinatario
-    let recipientInfo = 'a vos';
-    if (context.targetName && context.targetName !== userName) {
-      recipientInfo = `a ${context.targetName}`;
-    } else if (targetChat !== userPhone) {
-      recipientInfo = `a ${targetChat}`;
+    return buildConfirmationMessage(messageId, context, userName, userPhone, targetChat, null);
+  }
+
+  if (stage === 'collect_recurrence_end') {
+    const lower = messageText.toLowerCase().trim();
+    let endDate = null;
+    
+    if (messageText === '1' || messageText === '1️⃣' || lower === 'sin fecha' || lower === 'indefinidamente' || lower === 'sin fin') {
+      endDate = null; // Sin fecha de fin
+    } else {
+      // Intentar parsear la fecha
+      const parsedDate = calendarUtils.parseNaturalDate(messageText);
+      if (parsedDate) {
+        const combined = calendarUtils.combineDateAndTime(parsedDate, '23:59');
+        if (combined) {
+          endDate = new Date(combined.replace(' ', 'T'));
+          // Verificar que la fecha de fin sea después de la fecha de inicio
+          const startDate = new Date(context.scheduledDate);
+          if (endDate <= startDate) {
+            return {
+              message: `❌ La fecha de fin debe ser después de la fecha de inicio (${calendarUtils.formatDateForDisplay(startDate)}).\n\nIntenta nuevamente.\n\nEscribí *cancelar* si querés salir.`,
+              nextModule: session.current_module,
+              context: session.context
+            };
+          }
+        }
+      }
+      
+      if (!endDate) {
+        return {
+          message: `No pude entender la fecha. Intenta con algo como "2025-12-31" o "fin de año".\n\nO elegí *1* para que se repita indefinidamente.\n\nEscribí *cancelar* si querés salir.`,
+          nextModule: session.current_module,
+          context: session.context
+        };
+      }
     }
 
-    const formattedDate = calendarUtils.formatDateForDisplay(scheduledDate);
+    // Crear mensaje recurrente
+    const normalizedCreatorPhone = normalizePhone(userPhone);
+    if (!normalizedCreatorPhone) {
+      return {
+        message: '❌ Error: No se pudo normalizar tu número de teléfono. Por favor, intenta nuevamente.',
+        nextModule: 'main',
+        context: null
+      };
+    }
 
-    return {
-      message: `✅ Mensaje programado (ID #${messageId}).
-
-📅 Se enviará el ${formattedDate} ${recipientInfo}.
-📝 Contenido:
-${context.messageBody}
-
-Escribí *"mensajes programados"* para ver tus pendientes o *"cancelar mensaje ${messageId}"* si cambiás de idea.`,
-      nextModule: 'main',
-      context: null
+    const recurrence = {
+      type: context.recurrenceType,
+      endDate: endDate ? endDate.toISOString() : null
     };
+
+    const targetChat = context.targetChat || userPhone;
+    const targetType = context.targetType || 'user';
+    
+    const messageId = createScheduledMessage(db, {
+      creatorPhone: normalizedCreatorPhone,
+      targetChat,
+      targetType,
+      messageBody: context.messageBody,
+      sendAt: context.sendAt,
+      timezoneOffsetMinutes: context.timezoneOffsetMinutes,
+      recurrenceJson: JSON.stringify(recurrence)
+    });
+
+    return buildConfirmationMessage(messageId, context, userName, userPhone, targetChat, recurrence);
   }
 
   return {
@@ -542,6 +760,12 @@ function formatScheduledList(items, userOffsetMinutes) {
     ? userOffsetMinutes - serverOffset
     : 0;
 
+  const recurrenceLabels = {
+    'daily': '🔄 Diario',
+    'weekly': '🔄 Semanal',
+    'monthly': '🔄 Mensual'
+  };
+
   const lines = items.map(item => {
     let displayDate = item.send_at;
     if (item.send_at) {
@@ -559,7 +783,27 @@ function formatScheduledList(items, userOffsetMinutes) {
       const userDate = new Date(baseDate.getTime() + diffMinutes * 60000);
       displayDate = userDate;
     }
-    const header = `#${item.id} • ${calendarUtils.formatDateForDisplay(displayDate)}`;
+    
+    let recurrenceInfo = '';
+    if (item.recurrence_json) {
+      try {
+        const recurrence = JSON.parse(item.recurrence_json);
+        recurrenceInfo = `\n   ${recurrenceLabels[recurrence.type] || '🔄 Recurrente'}`;
+        if (recurrence.endDate) {
+          const endDate = new Date(recurrence.endDate);
+          recurrenceInfo += ` hasta ${calendarUtils.formatDateForDisplay(endDate)}`;
+        }
+      } catch (error) {
+        // Ignorar error de parseo
+      }
+    }
+    
+    let targetInfo = '';
+    if (item.target_type === 'group') {
+      targetInfo = '\n   👥 Grupo de WhatsApp';
+    }
+    
+    const header = `#${item.id} • ${calendarUtils.formatDateForDisplay(displayDate)}${recurrenceInfo}${targetInfo}`;
     const body = (item.message_body || '').trim().substring(0, 120);
     return `${header}
    ${body}${body.length === 120 ? '…' : ''}`;
@@ -589,5 +833,6 @@ module.exports = {
   getUserTimezoneInfo,
   getServerOffsetMinutes,
   isPremiumUser,
-  getPremiumLimit
+  getPremiumLimit,
+  createScheduledMessage
 };

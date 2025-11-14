@@ -125,8 +125,11 @@ async function getWeatherForecast(db, userPhone, userName, options = {}) {
         message: `🌤️ *Pronóstico del Tiempo*\n\n` +
           `Para darte el pronóstico, necesito saber tu ubicación.\n\n` +
           `*Opciones:*\n\n` +
-          `1️⃣ Detectar automáticamente (por IP)\n` +
-          `2️⃣ Escribir ciudad manualmente\n\n` +
+          `1️⃣ Compartir mi ubicación actual 📍\n` +
+          `2️⃣ Detectar automáticamente (por IP)\n` +
+          `3️⃣ Escribir ciudad manualmente\n\n` +
+          `_💡 Recomendado: Compartí tu ubicación para mayor precisión_\n` +
+          `_📍 Al compartir tu ubicación, el bot la detecta automáticamente y busca el nombre de tu ciudad_\n` +
           `_Ejemplo de ciudades: Mendoza, Buenos Aires, Córdoba, Rosario_`
       };
     }
@@ -333,7 +336,78 @@ function buildLocationLabel(city, country) {
 
 function buildWeatherMenu(currentLocation = null) {
   const locationLine = currentLocation ? `📍 Ubicación actual: *${currentLocation}*\n\n` : '';
-  return `\n\n${locationLine}*Opciones:*\n1️⃣ Escribir ciudad manualmente (recomendado)\n2️⃣ Cambiar de ciudad\n3️⃣ Volver al menú principal\n\n📌 *Tips:*\n• Podés escribir el nombre completo o abreviado (ej: "bue" para Buenos Aires)\n• También podés escribir directamente otra ciudad para consultarla\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
+  return `\n\n${locationLine}*Opciones:*\n1️⃣ Compartir ubicación actual 📍\n2️⃣ Cambiar de ciudad\n3️⃣ Volver al menú principal\n\n📌 *Tips:*\n• Podés compartir tu ubicación para mayor precisión\n• Al compartir tu ubicación, el bot la detecta automáticamente y busca el nombre de tu ciudad\n• También podés escribir directamente el nombre de una ciudad para consultarla\n💡 Escribí *"volver"* o *"menu"* en cualquier momento para regresar.`;
+}
+
+/**
+ * Procesar ubicación compartida por el usuario (desde mensaje de WhatsApp)
+ */
+async function processSharedLocation(db, userPhone, userName, lat, lon) {
+  try {
+    console.log(`[DEBUG] Procesando ubicación compartida: ${lat}, ${lon}`);
+    
+    // Obtener ciudad desde coordenadas usando geocodificación inversa
+    const locationData = await weatherAPI.getCityFromCoordinates(lat, lon);
+    
+    if (!locationData.success) {
+      return {
+        success: false,
+        message: `❌ No pude determinar la ciudad desde la ubicación compartida.\n\n` +
+          `Por favor intentá escribiendo el nombre de tu ciudad manualmente.`
+      };
+    }
+    
+    const cityData = locationData.data;
+    const cityName = cityData.city;
+    const country = cityData.country;
+    const state = cityData.state || cityData.region || null;
+    const countryCode = cityData.countryCode || null;
+    
+    // Guardar ubicación
+    saveUserLocation(db, userPhone, cityName, lat, lon, state, country, countryCode);
+    
+    // Obtener pronóstico inmediatamente
+    const forecast = await weatherAPI.getCurrentWeather(lat, lon, cityName);
+    
+    if (forecast.success) {
+      const locationLabel = buildLocationLabel(cityName, country);
+      const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
+      
+      // Trackear consulta de clima
+      try {
+        const statsModule = require('../../modules/stats-module');
+        statsModule.trackWeatherQuery(db, userPhone, {
+          city: cityName,
+          country: country || null,
+          temperature: forecast.data.temp || null,
+          condition: forecast.data.condition || null,
+          hasLocation: true,
+          detectionMethod: 'shared_location'
+        });
+      } catch (error) {
+        console.warn('[WARN] No se pudo trackear consulta de clima:', error.message);
+      }
+      
+      return {
+        success: true,
+        message: `✅ *Ubicación guardada: ${locationLabel}*\n\n${forecastMessage}\n\n${buildWeatherMenu(locationLabel)}`
+      };
+    } else {
+      return {
+        success: true,
+        message: `✅ *Ubicación guardada: ${locationLabel}*\n\n` +
+          `❌ No pude obtener el pronóstico del tiempo en este momento.\n\n` +
+          `Por favor intentá más tarde o escribí el nombre de tu ciudad.`
+      };
+    }
+  } catch (error) {
+    console.error('[ERROR] Error procesando ubicación compartida:', error);
+    return {
+      success: false,
+      message: `❌ Ocurrió un error al procesar tu ubicación.\n\n` +
+        `Por favor intentá escribiendo el nombre de tu ciudad manualmente.`
+    };
+  }
 }
 
 /**
@@ -347,6 +421,14 @@ function saveUserLocation(db, userPhone, city, lat = null, lon = null, state = n
   `);
   
   stmt.run(city, lat, lon, state, country, countryCode, userPhone);
+  
+  // Invalidar caché de ubicación
+  try {
+    database.invalidateUserLocationCache(userPhone);
+  } catch (error) {
+    // Ignorar si no está disponible
+  }
+  
   return { success: true };
 }
 
@@ -354,6 +436,7 @@ module.exports = {
   getWeatherForecast,
   saveUserLocation,
   formatWeatherMessage,
-  buildWeatherMenu
+  buildWeatherMenu,
+  processSharedLocation
 };
 

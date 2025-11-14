@@ -17,6 +17,7 @@
 - ✅ Eventos recurrentes (diario, semanal, mensual)
 - ✅ Notificaciones automáticas por WhatsApp
 - ✅ Vista mensual
+- ✅ Vista semanal
 - ✅ Búsqueda de eventos
 - ✅ Categorías (Personal, Trabajo, Urgente, Familia)
 - ✅ Sincronización con Google Calendar
@@ -83,6 +84,9 @@
 - ✅ Listar y cancelar mensajes programados
 - ✅ Sincronización automática con timezone del usuario
 - ✅ Scheduler automático que envía mensajes en tiempo real
+- ✅ Mensajes recurrentes (diario, semanal, mensual) con fecha de fin opcional
+- ✅ Envío a grupos de WhatsApp (todos los integrantes del grupo)
+- ✅ Sistema de respuestas al remitente (detecta replies y menciones de número)
 
 #### ⌨️ Palabras Clave Globales (Nuevo)
 - ✅ Acceso rápido a módulos desde cualquier menú
@@ -129,7 +133,9 @@
   - ✅ Límites diarios anti-spam con advertencias personalizadas
   - ✅ Sincronización de timezone del usuario
   - ✅ Scheduler automático que envía mensajes en tiempo real
-  - ⏳ Mensajes recurrentes - Pendiente
+  - ✅ Mensajes recurrentes (diario, semanal, mensual) con fecha de fin opcional
+  - ✅ Envío a grupos de WhatsApp (todos los integrantes)
+  - ✅ Sistema de respuestas al remitente (reply y menciones de número)
 - [ ] **Interpretación de imágenes para eventos** *(Nuevo)*
   - Subir imagen en el módulo de eventos y que el bot la interprete
   - Extraer fecha, hora y descripción de la imagen usando IA (Claude Vision)

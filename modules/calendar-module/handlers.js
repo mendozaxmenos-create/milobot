@@ -471,7 +471,23 @@ async function handleMessage(msg, userPhone, userName, messageText, currentModul
         updateSession('calendar_search', null);
         return response;
         
-      case '8': // Vista mensual
+      case '8': // Vista semanal
+        const today = new Date();
+        const day = today.getDay();
+        const diff = today.getDate() - day + (day === 0 ? -6 : 1); // Ajustar para que lunes = 1
+        const weekStart = new Date(today.getFullYear(), today.getMonth(), diff);
+        weekStart.setHours(0, 0, 0, 0);
+        
+        const weekEvents = database.getWeekEvents(db, userPhone, weekStart);
+        response = menus.getWeekView(weekStart, weekEvents, true);
+        // Guardar la fecha de inicio de la semana en la sesión para navegación
+        updateSession('calendar_week_view', JSON.stringify({ 
+          weekStart: weekStart.toISOString(),
+          weekStartDate: weekStart.getTime()
+        }));
+        return response;
+        
+      case '9': // Vista mensual
         const now = new Date();
         const monthEvents = database.getMonthEvents(db, userPhone, now.getFullYear(), now.getMonth() + 1);
         response = menus.getMonthView(now.getFullYear(), now.getMonth(), monthEvents);
@@ -479,12 +495,12 @@ async function handleMessage(msg, userPhone, userName, messageText, currentModul
         updateSession('calendar_month_view', JSON.stringify({ year: now.getFullYear(), month: now.getMonth(), events: monthEvents }));
         return response;
         
-      case '9': // Configuración
+      case '10': // Configuración
         response = menus.getConfigMenu();
         updateSession('calendar_config', null);
         return response;
         
-      case '10': // Sync Google Calendar
+      case '11': // Sync Google Calendar
         response = await handleGoogleSync(db, userPhone, client);
         // Si ya está autenticado, cambiar a calendar_google_sync para manejar las opciones
         const authStatus = await google.checkAuthStatus(db, userPhone);
@@ -495,7 +511,7 @@ async function handleMessage(msg, userPhone, userName, messageText, currentModul
         }
         return response;
         
-      case '11': // Volver al menú principal
+      case '12': // Volver al menú principal
         response = getMainMenu(userName);
         updateSession('main', null);
         return response;
@@ -2044,6 +2060,70 @@ async function handleMessage(msg, userPhone, userName, messageText, currentModul
     }
     
       return response;
+  }
+  
+  // ============================================
+  // VISTA SEMANAL - NAVEGACIÓN
+  // ============================================
+  
+  if (currentModule === 'calendar_week_view') {
+    const normalizedMessage = messageText.toLowerCase().trim();
+    
+    if (normalizedMessage === 'volver' || normalizedMessage === 'menu' || normalizedMessage === 'menú' || normalizedMessage === '4' || normalizedMessage === '4️⃣') {
+      response = menus.getMainMenu();
+      updateSession('calendar', null);
+      return response;
+    }
+    
+    // Obtener fecha de inicio de la semana desde el contexto
+    let currentWeekStart = new Date();
+    try {
+      if (context && context.weekStartDate) {
+        currentWeekStart = new Date(context.weekStartDate);
+      } else if (context && context.weekStart) {
+        currentWeekStart = new Date(context.weekStart);
+      } else {
+        // Calcular lunes de esta semana si no hay contexto
+        const day = currentWeekStart.getDay();
+        const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
+        currentWeekStart = new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth(), diff);
+      }
+    } catch (error) {
+      console.error('[ERROR] Error parseando fecha de semana:', error);
+      // Usar semana actual como fallback
+      const day = currentWeekStart.getDay();
+      const diff = currentWeekStart.getDate() - day + (day === 0 ? -6 : 1);
+      currentWeekStart = new Date(currentWeekStart.getFullYear(), currentWeekStart.getMonth(), diff);
+    }
+    currentWeekStart.setHours(0, 0, 0, 0);
+    
+    let newWeekStart = new Date(currentWeekStart);
+    
+    if (normalizedMessage === '1' || normalizedMessage === '1️⃣' || normalizedMessage === 'anterior' || normalizedMessage === 'atrás') {
+      // Semana anterior
+      newWeekStart.setDate(newWeekStart.getDate() - 7);
+    } else if (normalizedMessage === '2' || normalizedMessage === '2️⃣' || normalizedMessage === 'siguiente' || normalizedMessage === 'adelante') {
+      // Semana siguiente
+      newWeekStart.setDate(newWeekStart.getDate() + 7);
+    } else if (normalizedMessage === '3' || normalizedMessage === '3️⃣' || normalizedMessage === 'actual' || normalizedMessage === 'hoy') {
+      // Semana actual
+      const now = new Date();
+      const day = now.getDay();
+      const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+      newWeekStart = new Date(now.getFullYear(), now.getMonth(), diff);
+      newWeekStart.setHours(0, 0, 0, 0);
+    } else {
+      response = '❌ Opción no válida.\n\n' + menus.getWeekView(currentWeekStart, database.getWeekEvents(db, userPhone, currentWeekStart), true);
+      return response;
+    }
+    
+    const weekEvents = database.getWeekEvents(db, userPhone, newWeekStart);
+    response = menus.getWeekView(newWeekStart, weekEvents, true);
+    updateSession('calendar_week_view', JSON.stringify({ 
+      weekStart: newWeekStart.toISOString(),
+      weekStartDate: newWeekStart.getTime()
+    }));
+    return response;
   }
   
   // ============================================

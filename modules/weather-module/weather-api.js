@@ -7,6 +7,41 @@ const https = require('https');
 const API_KEY = process.env.OPENWEATHER_API_KEY || '';
 const BASE_URL = 'https://api.openweathermap.org/data/2.5';
 
+// Caché para geocodificación y búsqueda de ciudades
+const GEO_CACHE_TTL_MS = 24 * 60 * 60 * 1000; // 24 horas
+const WEATHER_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutos
+
+const geoCache = new Map(); // key: "lat,lon" o "city" -> { data, timestamp }
+const weatherCache = new Map(); // key: "lat,lon" o "city" -> { data, timestamp }
+
+function getCacheKey(type, ...args) {
+  return `${type}:${args.join(',')}`;
+}
+
+function getCached(key, ttl) {
+  const cached = geoCache.get(key) || weatherCache.get(key);
+  if (cached && (Date.now() - cached.timestamp) < ttl) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCache(key, data, ttl) {
+  const cache = key.startsWith('weather:') ? weatherCache : geoCache;
+  cache.set(key, { data, timestamp: Date.now() });
+  
+  // Limpiar caché antiguo periódicamente (cada 100 inserciones)
+  if (cache.size % 100 === 0) {
+    const now = Date.now();
+    for (const [k, v] of cache.entries()) {
+      const cacheTTL = k.startsWith('weather:') ? WEATHER_CACHE_TTL_MS : GEO_CACHE_TTL_MS;
+      if (now - v.timestamp > cacheTTL) {
+        cache.delete(k);
+      }
+    }
+  }
+}
+
 /**
  * Obtener clima actual
  */
@@ -19,6 +54,22 @@ async function getCurrentWeather(lat, lon, city) {
   }
   
   try {
+    // Verificar caché
+    let cacheKey = null;
+    if (lat && lon) {
+      cacheKey = getCacheKey('weather', lat.toString(), lon.toString());
+    } else if (city) {
+      cacheKey = getCacheKey('weather', city.toLowerCase().trim());
+    }
+    
+    if (cacheKey) {
+      const cached = getCached(cacheKey, WEATHER_CACHE_TTL_MS);
+      if (cached) {
+        console.log('[CACHE] Clima obtenido desde caché');
+        return cached;
+      }
+    }
+    
     let url;
     
     // Si tenemos coordenadas, usarlas (más preciso)
@@ -43,7 +94,7 @@ async function getCurrentWeather(lat, lon, city) {
       };
     }
     
-    return {
+    const result = {
       success: true,
       data: {
         temp: data.main.temp,
@@ -59,6 +110,13 @@ async function getCurrentWeather(lat, lon, city) {
         country: data.sys.country
       }
     };
+    
+    // Guardar en caché
+    if (cacheKey) {
+      setCache(cacheKey, result, WEATHER_CACHE_TTL_MS);
+    }
+    
+    return result;
   } catch (error) {
     console.error('[ERROR] Error en API de clima:', error);
     return {
@@ -81,6 +139,14 @@ async function getCityCoordinates(city) {
   }
   
   try {
+    // Verificar caché
+    const cacheKey = getCacheKey('geo_direct', city.toLowerCase().trim());
+    const cached = getCached(cacheKey, GEO_CACHE_TTL_MS);
+    if (cached) {
+      console.log('[CACHE] Coordenadas de ciudad obtenidas desde caché');
+      return cached;
+    }
+    
     console.log(`[DEBUG] Buscando ciudad: "${city}"`);
     console.log(`[DEBUG] API_KEY presente: ${API_KEY ? 'Sí' : 'No'}`);
     
@@ -196,7 +262,7 @@ async function getCityCoordinates(city) {
         // Preferir el resultado de Argentina
         let result = data.find(r => r.country === 'AR') || data[0];
         console.log(`[DEBUG] Ciudad encontrada: ${result.name}, ${result.country} (${result.lat}, ${result.lon})`);
-        return {
+        const cityResult = {
           success: true,
           data: {
             name: result.name,
@@ -206,6 +272,11 @@ async function getCityCoordinates(city) {
             state: result.state || null
           }
         };
+        
+        // Guardar en caché
+        setCache(cacheKey, cityResult, GEO_CACHE_TTL_MS);
+        
+        return cityResult;
       }
     }
     
@@ -236,7 +307,7 @@ async function getCityCoordinates(city) {
       }
       
       console.log(`[DEBUG] Ciudad encontrada: ${result.name}, ${result.country} (${result.lat}, ${result.lon})`);
-      return {
+      const cityResult = {
         success: true,
         data: {
           name: result.name,
@@ -246,6 +317,11 @@ async function getCityCoordinates(city) {
           state: result.state || null
         }
       };
+      
+      // Guardar en caché
+      setCache(cacheKey, cityResult, GEO_CACHE_TTL_MS);
+      
+      return cityResult;
     }
     
     // Si aún no se encontró y es una ciudad argentina, intentar sin acentos
@@ -265,7 +341,7 @@ async function getCityCoordinates(city) {
         if (Array.isArray(data) && data.length > 0) {
           let result = data.find(r => r.country === 'AR') || data[0];
           console.log(`[DEBUG] Ciudad encontrada sin acentos: ${result.name}`);
-          return {
+          const cityResult = {
             success: true,
             data: {
               name: result.name,
@@ -275,6 +351,11 @@ async function getCityCoordinates(city) {
               state: result.state || null
             }
           };
+          
+          // Guardar en caché
+          setCache(cacheKey, cityResult, GEO_CACHE_TTL_MS);
+          
+          return cityResult;
         }
       }
     }
@@ -291,6 +372,77 @@ async function getCityCoordinates(city) {
     return {
       success: false,
       error: error.message || 'Error al buscar la ciudad'
+    };
+  }
+}
+
+/**
+ * Obtener ciudad desde coordenadas (geocodificación inversa)
+ */
+async function getCityFromCoordinates(lat, lon) {
+  if (!API_KEY) {
+    console.error('[ERROR] OPENWEATHER_API_KEY no configurada');
+    return {
+      success: false,
+      error: 'API key no configurada'
+    };
+  }
+  
+  try {
+    // Verificar caché (redondear coordenadas para agrupar ubicaciones cercanas)
+    const roundedLat = Math.round(lat * 100) / 100; // Redondear a 2 decimales (~1km)
+    const roundedLon = Math.round(lon * 100) / 100;
+    const cacheKey = getCacheKey('geo_reverse', roundedLat.toString(), roundedLon.toString());
+    
+    const cached = getCached(cacheKey, GEO_CACHE_TTL_MS);
+    if (cached) {
+      console.log('[CACHE] Geocodificación inversa obtenida desde caché');
+      return cached;
+    }
+    
+    console.log(`[DEBUG] Obteniendo ciudad desde coordenadas: ${lat}, ${lon}`);
+    
+    // Usar la API de geocodificación inversa de OpenWeatherMap
+    const url = `https://api.openweathermap.org/geo/1.0/reverse?lat=${lat}&lon=${lon}&limit=1&appid=${API_KEY}`;
+    console.log(`[DEBUG] URL de geocodificación inversa: ${url.replace(API_KEY, 'API_KEY_HIDDEN')}`);
+    
+    const data = await makeRequest(url);
+    
+    console.log(`[DEBUG] Respuesta de geocodificación inversa:`, JSON.stringify(data).substring(0, 300));
+    
+    if (Array.isArray(data) && data.length > 0) {
+      const result = data[0];
+      console.log(`[DEBUG] Ciudad encontrada: ${result.name}, ${result.country} (${result.state || 'N/A'})`);
+      const geoResult = {
+        success: true,
+        data: {
+          city: result.name,
+          lat: parseFloat(lat),
+          lon: parseFloat(lon),
+          country: result.country,
+          countryCode: result.country || null,
+          state: result.state || null,
+          region: result.state || null
+        }
+      };
+      
+      // Guardar en caché
+      setCache(cacheKey, geoResult, GEO_CACHE_TTL_MS);
+      
+      return geoResult;
+    }
+    
+    console.log('[DEBUG] No se encontró ciudad para las coordenadas proporcionadas');
+    return {
+      success: false,
+      error: 'No se pudo determinar la ciudad desde las coordenadas'
+    };
+  } catch (error) {
+    console.error('[ERROR] Error en geocodificación inversa:', error);
+    console.error('[ERROR] Stack:', error.stack);
+    return {
+      success: false,
+      error: error.message || 'Error al obtener la ciudad desde las coordenadas'
     };
   }
 }
@@ -413,6 +565,7 @@ function makeRequest(url) {
 module.exports = {
   getCurrentWeather,
   getCityCoordinates,
-  getLocationByIP
+  getLocationByIP,
+  getCityFromCoordinates
 };
 

@@ -388,6 +388,51 @@ function getMonthEvents(db, userPhone, year, month) {
 }
 
 /**
+ * Obtener eventos de la semana actual
+ * @param {Object} db - Instancia de base de datos
+ * @param {String} userPhone - Teléfono del usuario
+ * @param {Date} startDate - Fecha de inicio de la semana (opcional, por defecto lunes de esta semana)
+ * @returns {Array} Array de eventos de la semana
+ */
+function getWeekEvents(db, userPhone, startDate = null) {
+  ensureHasDueDateColumn(db);
+
+  // Si no se proporciona startDate, usar el lunes de esta semana
+  let weekStart = startDate;
+  if (!weekStart) {
+    const today = new Date();
+    const day = today.getDay();
+    const diff = today.getDate() - day + (day === 0 ? -6 : 1); // Ajustar para que lunes = 1
+    weekStart = new Date(today.getFullYear(), today.getMonth(), diff);
+    weekStart.setHours(0, 0, 0, 0);
+  }
+
+  // Calcular fin de semana (domingo a las 23:59:59)
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 6);
+  weekEnd.setHours(23, 59, 59, 999);
+
+  const startDateStr = weekStart.toISOString().slice(0, 19).replace('T', ' ');
+  const endDateStr = weekEnd.toISOString().slice(0, 19).replace('T', ' ');
+
+  const stmt = db.prepare(`
+    SELECT * FROM calendar_events
+    WHERE user_phone = ?
+    AND event_date >= ?
+    AND event_date <= ?
+    AND has_due_date = 1
+    ORDER BY event_date
+  `);
+  
+  const events = stmt.all(userPhone, startDateStr, endDateStr);
+  // Agregar invitados a cada evento
+  return events.map(event => {
+    event.invitees = getEventInvitees(db, event.id);
+    return event;
+  });
+}
+
+/**
  * Marcar recordatorio como enviado
  */
 function markReminderSent(db, eventId) {
@@ -723,6 +768,7 @@ module.exports = {
   updateEvent,
   deleteEvent,
   getMonthEvents,
+  getWeekEvents,
   markReminderSent,
   getEventsNeedingNotification,
   updateGoogleEventId,
