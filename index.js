@@ -4328,7 +4328,8 @@ async function handleMessage(msg) {
   // Reiniciar timeout cada vez que el usuario envía un mensaje
   resetTimeout(userPhone);
 
-  const session = getSession(userPhone);
+  // IMPORTANTE: Leer sesión usando el teléfono normalizado para asegurar consistencia
+  const session = getSession(normalizedUserPhone) || getSession(userPhone);
   const currentModule = session?.current_module || 'main';
   
   // Debug: Log del módulo actual para troubleshooting
