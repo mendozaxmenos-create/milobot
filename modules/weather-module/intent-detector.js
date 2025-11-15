@@ -98,13 +98,36 @@ function detectWeatherIntent(message) {
       }
 
       // Intentar extraer nombre de ciudad si está presente
-      const cityMatch = lowerMessage.match(/(?:en|de|el)\s+([a-záéíóúñ\s]+?)(?:\s|$|,|\.|hoy|mañana)/i);
-      if (cityMatch && cityMatch[1]) {
-        const potentialCity = cityMatch[1].trim();
-        // Filtrar palabras comunes que no son ciudades
-        const commonWords = ['el', 'la', 'los', 'las', 'un', 'una', 'del', 'de', 'en', 'hoy', 'mañana', 'clima', 'tiempo', 'pronóstico', 'pronostico'];
-        if (!commonWords.includes(potentialCity.toLowerCase()) && potentialCity.length > 2) {
-          intent.city = potentialCity.trim();
+      // Patrones mejorados para detectar ciudades
+      const cityPatterns = [
+        /(?:en|de|el|la)\s+([a-záéíóúñ\s]{3,30}?)(?:\s|$|,|\.|hoy|mañana|\?)/i,
+        /\b(mdz|bsas|ba|cba|rosario|santiago|valparaíso|lima|bogotá|bogota|mexico|df)\b/i,
+        /(?:clima|tiempo|pronóstico|pronostico|llover|llueve)\s+(?:en|de)\s+([a-záéíóúñ\s]{3,30}?)(?:\s|$|,|\.|hoy|mañana|\?)/i
+      ];
+      
+      for (const pattern of cityPatterns) {
+        const cityMatch = lowerMessage.match(pattern);
+        if (cityMatch && cityMatch[1]) {
+          const potentialCity = cityMatch[1].trim();
+          // Filtrar palabras comunes que no son ciudades
+          const commonWords = ['el', 'la', 'los', 'las', 'un', 'una', 'del', 'de', 'en', 'hoy', 'mañana', 'clima', 'tiempo', 'pronóstico', 'pronostico', 'va', 'a', 'hacer', 'está', 'estará'];
+          const cityLower = potentialCity.toLowerCase();
+          
+          if (!commonWords.includes(cityLower) && potentialCity.length > 2) {
+            // Mapear abreviaciones comunes
+            const cityMap = {
+              'mdz': 'Mendoza',
+              'bsas': 'Buenos Aires',
+              'ba': 'Buenos Aires',
+              'cba': 'Córdoba',
+              'df': 'Ciudad de México',
+              'ros': 'Rosario'
+            };
+            
+            intent.city = cityMap[cityLower] || potentialCity.trim();
+            console.log(`[DEBUG] Ciudad detectada en pregunta: "${intent.city}"`);
+            break;
+          }
         }
       }
 

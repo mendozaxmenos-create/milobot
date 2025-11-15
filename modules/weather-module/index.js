@@ -438,7 +438,44 @@ function saveUserLocation(db, userPhone, city, lat = null, lon = null, state = n
  */
 async function answerWeatherQuestion(db, userPhone, userName, question, options = {}) {
   try {
-    // Obtener ubicación del usuario
+    // Intentar extraer ciudad de la pregunta
+    const weatherIntentDetector = require('./intent-detector');
+    const weatherIntent = weatherIntentDetector.detectWeatherIntent(question);
+    let cityFromQuestion = null;
+    
+    if (weatherIntent && weatherIntent.city) {
+      cityFromQuestion = weatherIntent.city.trim();
+      console.log(`[DEBUG] Ciudad extraída de la pregunta: "${cityFromQuestion}"`);
+    }
+    
+    // También buscar patrones comunes de ciudades en la pregunta
+    if (!cityFromQuestion) {
+      // Buscar patrones como "en mendoza", "en buenos aires", "mdz", etc.
+      const cityPatterns = [
+        /(?:en|de|el|la)\s+([a-záéíóúñ]{3,30})(?:\s|$|,|\.|hoy|mañana|\?)/i,
+        /\b(mdz|bsas|ba|cba|rosario|santiago|valparaíso|lima|bogotá|bogota|mexico|df)\b/i
+      ];
+      
+      for (const pattern of cityPatterns) {
+        const match = question.match(pattern);
+        if (match && match[1]) {
+          const potentialCity = match[1].trim();
+          // Mapear abreviaciones comunes
+          const cityMap = {
+            'mdz': 'Mendoza',
+            'bsas': 'Buenos Aires',
+            'ba': 'Buenos Aires',
+            'cba': 'Córdoba',
+            'df': 'Ciudad de México'
+          };
+          cityFromQuestion = cityMap[potentialCity.toLowerCase()] || potentialCity;
+          console.log(`[DEBUG] Ciudad detectada por patrón: "${cityFromQuestion}"`);
+          break;
+        }
+      }
+    }
+    
+    // Obtener ubicación guardada del usuario
     const storedLocation = database.getUserLocation(db, userPhone);
     const userLocation = storedLocation ? {
       city: storedLocation.location_city,
@@ -446,55 +483,56 @@ async function answerWeatherQuestion(db, userPhone, userName, question, options 
       lon: storedLocation.location_lon
     } : null;
 
-    // Si no tiene ubicación, intentar detectar automáticamente
-    if (!userLocation || !userLocation.city) {
-      if (ENABLE_IP_AUTO_LOCATION) {
-        try {
-          const ipLocation = await weatherAPI.getLocationByIP();
-          if (ipLocation.success) {
-            const forecast = await weatherAPI.getCurrentWeather(
-              ipLocation.data.lat,
-              ipLocation.data.lon,
-              ipLocation.data.city
-            );
-            
-            if (forecast.success) {
-              const locationLabel = buildLocationLabel(ipLocation.data.city, forecast.data.country);
-              const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
-              
-              // Si pregunta específicamente por lluvia, dar respuesta directa
-              if (/llov/i.test(question.toLowerCase())) {
-                const rain = forecast.data.rain || 0;
-                const willRain = rain > 0 || /lluvia|rain|drizzle/i.test(forecast.data.condition || '');
-                const rainAnswer = willRain 
-                  ? `🌧️ *Sí, va a llover* en ${locationLabel || ipLocation.data.city}.\n\n${forecastMessage}`
-                  : `☀️ *No, no va a llover* en ${locationLabel || ipLocation.data.city}.\n\n${forecastMessage}`;
-                
-                return {
-                  message: rainAnswer,
-                  directAnswer: true
-                };
-              }
-              
-              return {
-                message: forecastMessage,
-                directAnswer: true
-              };
-            }
-          }
-        } catch (error) {
-          console.warn('[WARN] Error en detección automática para pregunta:', error.message);
-        }
-      }
-      
-      // Si no se pudo detectar, pedir ubicación
+    // Prioridad: 1) Ciudad en la pregunta, 2) Ubicación guardada, 3) Pedir ciudad
+    let targetCity = null;
+    let targetLat = null;
+    let targetLon = null;
+    
+    if (cityFromQuestion) {
+      // Usar ciudad mencionada en la pregunta
+      targetCity = cityFromQuestion;
+      console.log(`[DEBUG] Usando ciudad de la pregunta: ${targetCity}`);
+    } else if (userLocation && userLocation.city) {
+      // Usar ubicación guardada
+      targetCity = userLocation.city;
+      targetLat = userLocation.lat;
+      targetLon = userLocation.lon;
+      console.log(`[DEBUG] Usando ubicación guardada: ${targetCity}`);
+    } else {
+      // No hay ciudad ni ubicación, pedir al usuario
       return {
-        message: `🌤️ Para darte el pronóstico, necesito saber tu ubicación.\n\n` +
-          `Escribí el nombre de tu ciudad o compartí tu ubicación.`,
+        message: `🌤️ Para darte el pronóstico, necesito saber la ubicación.\n\n` +
+          `*Opciones:*\n` +
+          `• Mencioná la ciudad en tu pregunta: "va a llover hoy en Buenos Aires?"\n` +
+          `• Escribí el nombre de tu ciudad\n` +
+          `• Compartí tu ubicación desde WhatsApp\n\n` +
+          `_Ejemplos:_\n` +
+          `• "va a llover hoy en Mendoza?"\n` +
+          `• "qué pronóstico hace en Córdoba?"\n` +
+          `• "clima en Buenos Aires"`,
         directAnswer: true,
         needsLocation: true
       };
     }
+
+    // Obtener pronóstico
+    const forecast = await weatherAPI.getCurrentWeather(
+      targetLat || null,
+      targetLon || null,
+      targetCity
+    );
+
+    if (!forecast.success) {
+      return {
+        message: `❌ No pude obtener el pronóstico para ${targetCity}.\n\n` +
+          `Error: ${forecast.error}\n\n` +
+          `¿Querés intentar con otra ciudad?`,
+        directAnswer: true
+      };
+    }
+
+    const locationLabel = buildLocationLabel(targetCity, forecast.data.country);
+    const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
 
     // Usuario tiene ubicación guardada, obtener pronóstico
     const forecast = await weatherAPI.getCurrentWeather(
@@ -511,16 +549,13 @@ async function answerWeatherQuestion(db, userPhone, userName, question, options 
       };
     }
 
-    const locationLabel = buildLocationLabel(userLocation.city, forecast.data.country);
-    const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
-
     // Si pregunta específicamente por lluvia, dar respuesta directa
     if (/llov/i.test(question.toLowerCase())) {
       const rain = forecast.data.rain || 0;
       const willRain = rain > 0 || /lluvia|rain|drizzle/i.test(forecast.data.condition || '');
       const rainAnswer = willRain 
-        ? `🌧️ *Sí, va a llover* en ${locationLabel || userLocation.city}.\n\n${forecastMessage}`
-        : `☀️ *No, no va a llover* en ${locationLabel || userLocation.city}.\n\n${forecastMessage}`;
+        ? `🌧️ *Sí, va a llover* en ${locationLabel || targetCity}.\n\n${forecastMessage}`
+        : `☀️ *No, no va a llover* en ${locationLabel || targetCity}.\n\n${forecastMessage}`;
       
       return {
         message: rainAnswer,
@@ -532,7 +567,7 @@ async function answerWeatherQuestion(db, userPhone, userName, question, options 
     if (/(temp|grados|calor|frío)/i.test(question.toLowerCase())) {
       const temp = Math.round(forecast.data.temp);
       const feelsLike = Math.round(forecast.data.feelsLike);
-      const tempAnswer = `🌡️ En ${locationLabel || userLocation.city} la temperatura es de *${temp}°C* (sensación térmica: *${feelsLike}°C*).\n\n${forecastMessage}`;
+      const tempAnswer = `🌡️ En ${locationLabel || targetCity} la temperatura es de *${temp}°C* (sensación térmica: *${feelsLike}°C*).\n\n${forecastMessage}`;
       
       return {
         message: tempAnswer,
