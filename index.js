@@ -4241,32 +4241,47 @@ async function handleMessage(msg) {
 
   const userInfo = registerUser(normalizedUserPhone, userName);
   
-  // Detectar preguntas sobre clima en lenguaje natural (antes de procesar otros comandos)
-  if (messageText && messageText.trim()) {
-    try {
-      const weatherIntentDetector = require('./modules/weather-module/intent-detector');
-      const weatherIntent = weatherIntentDetector.detectWeatherIntent(messageText);
-      
-      if (weatherIntent) {
-        console.log(`[DEBUG] Pregunta sobre clima detectada: "${messageText}"`);
-        const weatherModule = require('./modules/weather-module');
+  // Reiniciar timeout cada vez que el usuario envía un mensaje
+  resetTimeout(userPhone);
+
+  const session = getSession(userPhone);
+  const currentModule = session?.current_module || 'main';
+  
+  // Detectar preguntas sobre clima en lenguaje natural SOLO si:
+  // 1. No estamos en un módulo específico (main) O
+  // 2. El mensaje es claramente una pregunta sobre clima (no solo un número o comando simple)
+  if (messageText && messageText.trim() && currentModule === 'main') {
+    // No procesar si es solo un número o comando simple (podría ser una opción de menú)
+    const trimmedMessage = messageText.trim();
+    const isSimpleCommand = /^[\d\s\W]+$/.test(trimmedMessage) && trimmedMessage.length <= 5;
+    
+    // Solo detectar si NO es un comando simple
+    if (!isSimpleCommand) {
+      try {
+        const weatherIntentDetector = require('./modules/weather-module/intent-detector');
+        const weatherIntent = weatherIntentDetector.detectWeatherIntent(messageText);
         
-        // Obtener respuesta directa
-        const weatherAnswer = await weatherModule.answerWeatherQuestion(
-          db,
-          normalizedUserPhone,
-          userName,
-          messageText
-        );
-        
-        if (weatherAnswer && weatherAnswer.directAnswer) {
-          await msg.reply(weatherAnswer.message);
-          return;
+        if (weatherIntent) {
+          console.log(`[DEBUG] Pregunta sobre clima detectada: "${messageText}"`);
+          const weatherModule = require('./modules/weather-module');
+          
+          // Obtener respuesta directa
+          const weatherAnswer = await weatherModule.answerWeatherQuestion(
+            db,
+            normalizedUserPhone,
+            userName,
+            messageText
+          );
+          
+          if (weatherAnswer && weatherAnswer.directAnswer) {
+            await msg.reply(weatherAnswer.message);
+            return;
+          }
         }
+      } catch (error) {
+        console.warn('[WARN] Error detectando pregunta de clima:', error.message);
+        // Continuar con el flujo normal si falla
       }
-    } catch (error) {
-      console.warn('[WARN] Error detectando pregunta de clima:', error.message);
-      // Continuar con el flujo normal si falla
     }
   }
   
@@ -4329,12 +4344,6 @@ async function handleMessage(msg) {
   } catch (error) {
     console.warn('[WARN] No se pudo registrar el mensaje directo en estadísticas:', error.message);
   }
-
-  // Reiniciar timeout cada vez que el usuario envía un mensaje
-  resetTimeout(userPhone);
-
-  const session = getSession(userPhone);
-  const currentModule = session?.current_module || 'main';
 
   let response = '';
 
