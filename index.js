@@ -4332,8 +4332,9 @@ async function handleMessage(msg) {
   const currentModule = session?.current_module || 'main';
   
   // Detectar preguntas sobre clima en lenguaje natural SOLO si:
-  // 1. No estamos en un módulo específico (main) O
-  // 2. El mensaje es claramente una pregunta sobre clima (no solo un número o comando simple)
+  // 1. Estamos en el módulo 'main' (no en ningún otro módulo)
+  // 2. El mensaje NO es solo un número o comando simple (podría ser una opción de menú)
+  // 3. El mensaje es claramente una pregunta sobre clima
   if (messageText && messageText.trim() && currentModule === 'main') {
     // No procesar si es solo un número o comando simple (podría ser una opción de menú)
     const trimmedMessage = messageText.trim();
