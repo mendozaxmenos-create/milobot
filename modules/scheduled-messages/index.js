@@ -392,6 +392,26 @@ async function handleFlowMessage({ db, userPhone, userName, messageText, session
     const messageBody = messageText && messageText.trim();
     console.log(`[DEBUG] collect_text: messageBody="${messageBody?.substring(0, 50)}...", length=${messageBody?.length || 0}`);
     
+    // Si el mensaje es solo un número (1-4), probablemente el usuario está intentando seleccionar una opción
+    // pero todavía está en collect_text porque el mensaje anterior no se procesó
+    // En este caso, debemos verificar si hay un messageBody guardado en el contexto
+    if (messageBody && /^[1-4]$/.test(messageBody)) {
+      console.log(`[DEBUG] collect_text: Mensaje es solo un número (${messageBody}), verificando si hay messageBody previo en contexto`);
+      
+      // Si ya hay un messageBody guardado, significa que el usuario está intentando seleccionar una opción
+      // pero la sesión no se actualizó correctamente. Avanzar a collect_recipient con el messageBody previo.
+      if (context.messageBody && context.messageBody.trim()) {
+        console.log(`[DEBUG] collect_text: Encontrado messageBody previo, avanzando a collect_recipient y procesando opción ${messageBody}`);
+        const savedMessageBody = context.messageBody;
+        context.stage = 'collect_recipient';
+        context.messageBody = savedMessageBody;
+        
+        // Procesar la opción seleccionada directamente
+        // Esto es un workaround para cuando la sesión no se actualizó correctamente
+        return await handleRecipientSelection(messageBody, context, userPhone, userName, session, client, db);
+      }
+    }
+    
     if (!messageBody) {
       console.log(`[DEBUG] collect_text: Mensaje vacío, pidiendo contenido`);
       return {
@@ -419,9 +439,11 @@ Escribí *cancelar* si querés salir.`,
     };
   }
 
-  if (stage === 'collect_recipient') {
-    // Si el usuario eligió "1" o "a mí mismo", usar su propio número
-    if (messageText === '1' || messageText === '1️⃣' || lower === 'a mí mismo' || lower === 'a mi mismo' || lower === 'mí mismo' || lower === 'mi mismo') {
+  // Función auxiliar para manejar la selección de destinatario cuando hay un problema de sesión
+  async function handleRecipientSelection(option, context, userPhone, userName, session, client, db) {
+    const optionLower = option.toLowerCase();
+    
+    if (option === '1' || option === '1️⃣') {
       context.stage = 'collect_datetime';
       context.targetChat = userPhone;
       context.targetType = 'user';
@@ -433,6 +455,164 @@ Escribí *cancelar* si querés salir.`,
         context: JSON.stringify(context)
       };
     }
+
+    if (option === '2' || option === '2️⃣') {
+      context.stage = 'waiting_contact';
+      return {
+        message: `📱 *Compartir Contacto*\n\nToca el ícono de 📎 (adjuntar)\nSelecciona *"Contacto"*\nElige el contacto a agregar\n\n_Escribí *"cancelar"* para volver_`,
+        nextModule: 'scheduled_message_waiting_contact',
+        context: JSON.stringify(context)
+      };
+    }
+
+    if (option === '3' || option === '3️⃣') {
+      context.stage = 'collect_phone';
+      return {
+        message: `📱 *Escribir Número*\n\nEscribí el número de teléfono (con código de país):\n\n_Ejemplo: +5491123456789 o 91123456789_\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: 'scheduled_message_collect_phone',
+        context: JSON.stringify(context)
+      };
+    }
+
+    if (option === '4' || option === '4️⃣') {
+      // Esta es la opción que el usuario quiere: enviar a grupo
+      // Llamar a la lógica de selección de grupo
+      return await handleGroupSelection(context, userPhone, session, client);
+    }
+
+    return null;
+  }
+
+  // Función auxiliar para manejar la selección de grupo
+  async function handleGroupSelection(context, userPhone, session, client) {
+    if (!client) {
+      return {
+        message: `❌ No tengo acceso al cliente de WhatsApp en este momento. Por favor, intentá más tarde.\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+
+    try {
+      const chats = await client.getChats();
+      const allGroups = chats.filter(chat => chat.isGroup === true);
+
+      if (allGroups.length === 0) {
+        return {
+          message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nAsegurate de que esté agregado al grupo antes de intentar enviar mensajes.\n\nEscribí *cancelar* si querés salir.`,
+          nextModule: session.current_module,
+          context: session.context
+        };
+      }
+
+      const normalizedUserPhone = normalizePhone(userPhone);
+      const userGroups = [];
+      const otherGroups = [];
+      const preSelectedGroup = context.preSelectedGroup;
+      
+      for (const group of allGroups) {
+        try {
+          let isUserMember = false;
+          const groupChat = await client.getChatById(group.id._serialized);
+          if (groupChat) {
+            let participants = [];
+            if (groupChat.participants && Array.isArray(groupChat.participants)) {
+              participants = groupChat.participants;
+            } else if (typeof groupChat.getParticipants === 'function') {
+              participants = await groupChat.getParticipants();
+            } else if (groupChat.groupMetadata && groupChat.groupMetadata.participants) {
+              participants = groupChat.groupMetadata.participants;
+            }
+            
+            if (participants && participants.length > 0 && normalizedUserPhone) {
+              isUserMember = participants.some(participant => {
+                const participantId = participant.id?._serialized || participant.id?.user || participant.id;
+                if (!participantId) return false;
+                const participantPhone = participantId.replace('@c.us', '').replace('@g.us', '').replace('@lid', '');
+                const normalizedParticipantPhone = normalizePhone(participantPhone);
+                return normalizedParticipantPhone === normalizedUserPhone;
+              });
+            }
+          }
+          
+          if (isUserMember) {
+            userGroups.push(group);
+          } else {
+            otherGroups.push(group);
+          }
+        } catch (error) {
+          console.warn(`[WARN] Error procesando grupo ${group.id?._serialized}:`, error.message);
+          otherGroups.push(group);
+        }
+      }
+      
+      const groups = [...userGroups, ...otherGroups];
+      
+      if (groups.length === 0) {
+        return {
+          message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nEscribí *cancelar* si querés salir.`,
+          nextModule: session.current_module,
+          context: session.context
+        };
+      }
+
+      let groupsList = `📱 *Seleccioná un grupo:*\n\n`;
+      let preSelectedIndex = -1;
+      let userGroupCount = 0;
+      
+      groups.forEach((group, index) => {
+        const groupName = group.name || `Grupo ${index + 1}`;
+        const groupId = group.id._serialized;
+        const isUserGroup = index < userGroups.length;
+        if (isUserGroup) {
+          userGroupCount++;
+        }
+        const isPreSelected = preSelectedGroup && (groupId === preSelectedGroup.id || groupName === preSelectedGroup.name);
+        
+        if (isPreSelected) {
+          preSelectedIndex = index;
+          groupsList += `⭐ ${index + 1}️⃣ ${groupName} (recomendado)`;
+          if (isUserGroup) {
+            groupsList += ` 👤`;
+          }
+          groupsList += `\n`;
+        } else if (isUserGroup) {
+          groupsList += `👤 ${index + 1}️⃣ ${groupName} (tus grupos)\n`;
+        } else {
+          groupsList += `${index + 1}️⃣ ${groupName}\n`;
+        }
+      });
+      
+      if (userGroupCount > 0) {
+        groupsList += `\n💡 Los grupos marcados con 👤 son grupos donde sos integrante.`;
+      }
+      
+      if (preSelectedIndex >= 0) {
+        groupsList += `\n⭐ El grupo marcado con ⭐ es el que mencionaste en el grupo.`;
+      }
+      
+      groupsList += `\n\nEscribí el número del grupo o *cancelar* para volver.`;
+
+      context.stage = 'select_group';
+      context.availableGroups = groups.map(g => ({
+        id: g.id._serialized,
+        name: g.name || 'Sin nombre'
+      }));
+
+      return {
+        message: groupsList,
+        nextModule: 'scheduled_message_select_group',
+        context: JSON.stringify(context)
+      };
+    } catch (error) {
+      console.error('[ERROR] Error obteniendo grupos:', error);
+      return {
+        message: `❌ Error al obtener los grupos. Por favor, intentá más tarde.\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: session.current_module,
+        context: session.context
+      };
+    }
+  }
 
     // Si el usuario eligió "2" o "compartir contacto", esperar el contacto
     if (messageText === '2' || messageText === '2️⃣' || lower === 'compartir contacto' || lower === 'compartir') {
