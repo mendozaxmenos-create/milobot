@@ -614,6 +614,21 @@ Escribí *cancelar* si querés salir.`,
     }
   }
 
+  if (stage === 'collect_recipient') {
+    // Si el usuario eligió "1" o "a mí mismo", usar su propio número
+    if (messageText === '1' || messageText === '1️⃣' || lower === 'a mí mismo' || lower === 'a mi mismo' || lower === 'mí mismo' || lower === 'mi mismo') {
+      context.stage = 'collect_datetime';
+      context.targetChat = userPhone;
+      context.targetType = 'user';
+      context.targetName = userName;
+
+      return {
+        message: `Perfecto, se enviará a vos. ¿Cuándo querés que lo envíe? Usa el formato \`AAAA-MM-DD HH:MM\` o algo como "mañana 09:00".\n\nEscribí *cancelar* si querés salir.`,
+        nextModule: 'scheduled_message_collect_datetime',
+        context: JSON.stringify(context)
+      };
+    }
+
     // Si el usuario eligió "2" o "compartir contacto", esperar el contacto
     if (messageText === '2' || messageText === '2️⃣' || lower === 'compartir contacto' || lower === 'compartir') {
       context.stage = 'waiting_contact';
