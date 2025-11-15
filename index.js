@@ -4331,6 +4331,11 @@ async function handleMessage(msg) {
   const session = getSession(userPhone);
   const currentModule = session?.current_module || 'main';
   
+  // Debug: Log del módulo actual para troubleshooting
+  if (messageText && messageText.trim() && messageText.length <= 5) {
+    console.log(`[DEBUG] Módulo actual: "${currentModule}", Mensaje: "${messageText}"`);
+  }
+  
   // Detectar preguntas sobre clima en lenguaje natural SOLO si:
   // 1. Estamos en el módulo 'main' (no en ningún otro módulo)
   // 2. El mensaje NO es solo un número o comando simple (podría ser una opción de menú)
