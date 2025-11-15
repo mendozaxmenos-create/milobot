@@ -378,6 +378,8 @@ async function handleFlowMessage({ db, userPhone, userName, messageText, session
   const stage = context.stage || 'collect_text';
   const lower = (messageText || '').trim().toLowerCase();
 
+  console.log(`[DEBUG] handleFlowMessage: stage="${stage}", messageText="${messageText?.substring(0, 50)}...", userPhone="${userPhone}"`);
+
   if (lower === 'cancelar' || lower === 'salir') {
     return {
       message: '👌 Mensaje programado cancelado. Volvemos al menú principal.',
@@ -388,7 +390,10 @@ async function handleFlowMessage({ db, userPhone, userName, messageText, session
 
   if (stage === 'collect_text') {
     const messageBody = messageText && messageText.trim();
+    console.log(`[DEBUG] collect_text: messageBody="${messageBody?.substring(0, 50)}...", length=${messageBody?.length || 0}`);
+    
     if (!messageBody) {
+      console.log(`[DEBUG] collect_text: Mensaje vacío, pidiendo contenido`);
       return {
         message: `Necesito que me digas el contenido del mensaje. Intenta nuevamente.\n\nEscribí *cancelar* si querés salir.`,
         nextModule: session.current_module,
@@ -396,6 +401,7 @@ async function handleFlowMessage({ db, userPhone, userName, messageText, session
       };
     }
 
+    console.log(`[DEBUG] collect_text: Mensaje recibido, avanzando a collect_recipient`);
     context.stage = 'collect_recipient';
     context.messageBody = messageBody;
 
