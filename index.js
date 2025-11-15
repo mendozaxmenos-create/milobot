@@ -4779,22 +4779,36 @@ async function handleMessage(msg) {
 
   if (currentModule && currentModule.startsWith('scheduled_message')) {
     const phoneToUse = normalizedUserPhone || normalizePhone(userPhone);
-    const flowResult = await scheduledMessagesModule.handleFlowMessage({
-      db,
-      userPhone: phoneToUse,
-      userName,
-      messageText,
-      session,
-      client
-    });
+    console.log(`[DEBUG] Procesando mensaje en módulo scheduled_message: currentModule="${currentModule}", messageText="${messageText?.substring(0, 50)}..."`);
+    
+    try {
+      const flowResult = await scheduledMessagesModule.handleFlowMessage({
+        db,
+        userPhone: phoneToUse,
+        userName,
+        messageText,
+        session,
+        client
+      });
 
-    if (flowResult) {
-      await msg.reply(flowResult.message);
-      if (flowResult.nextModule) {
-        updateSession(phoneToUse, flowResult.nextModule, flowResult.context || null);
+      console.log(`[DEBUG] flowResult recibido:`, flowResult ? `nextModule="${flowResult.nextModule}", message length=${flowResult.message?.length || 0}` : 'null');
+
+      if (flowResult) {
+        await msg.reply(flowResult.message);
+        if (flowResult.nextModule) {
+          console.log(`[DEBUG] Actualizando sesión a: "${flowResult.nextModule}"`);
+          updateSession(phoneToUse, flowResult.nextModule, flowResult.context || null);
+        } else {
+          console.log(`[DEBUG] Actualizando sesión a: "main"`);
+          updateSession(phoneToUse, 'main', null);
+        }
+        return;
       } else {
-        updateSession(phoneToUse, 'main', null);
+        console.warn(`[WARN] flowResult es null o undefined para módulo ${currentModule}`);
       }
+    } catch (error) {
+      console.error(`[ERROR] Error en handleFlowMessage:`, error);
+      await msg.reply('❌ Ocurrió un error procesando tu mensaje. Por favor, intentá de nuevo o escribí *cancelar* para salir.');
       return;
     }
   }
