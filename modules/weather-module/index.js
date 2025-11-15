@@ -534,21 +534,6 @@ async function answerWeatherQuestion(db, userPhone, userName, question, options 
     const locationLabel = buildLocationLabel(targetCity, forecast.data.country);
     const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
 
-    // Usuario tiene ubicación guardada, obtener pronóstico
-    const forecast = await weatherAPI.getCurrentWeather(
-      userLocation.lat || null,
-      userLocation.lon || null,
-      userLocation.city
-    );
-
-    if (!forecast.success) {
-      return {
-        message: `❌ No pude obtener el pronóstico para ${userLocation.city}.\n\n` +
-          `Error: ${forecast.error}`,
-        directAnswer: true
-      };
-    }
-
     // Si pregunta específicamente por lluvia, dar respuesta directa
     if (/llov/i.test(question.toLowerCase())) {
       const rain = forecast.data.rain || 0;
