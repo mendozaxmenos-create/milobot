@@ -539,7 +539,7 @@ Escribí *cancelar* si querés salir.`,
         
         if (groups.length === 0) {
           return {
-            message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nAscribí *cancelar* si querés salir.`,
+            message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nEscribí *cancelar* si querés salir.`,
             nextModule: session.current_module,
             context: session.context
           };
