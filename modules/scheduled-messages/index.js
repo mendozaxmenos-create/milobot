@@ -463,13 +463,83 @@ Escribí *cancelar* si querés salir.`,
         const chats = await client.getChats();
         
         // Filtrar solo grupos donde Milo está presente
-        const groups = chats.filter(chat => {
+        const allGroups = chats.filter(chat => {
           return chat.isGroup === true;
         });
 
-        if (groups.length === 0) {
+        if (allGroups.length === 0) {
           return {
             message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nAsegurate de que esté agregado al grupo antes de intentar enviar mensajes.\n\nEscribí *cancelar* si querés salir.`,
+            nextModule: session.current_module,
+            context: session.context
+          };
+        }
+
+        // Normalizar teléfono del usuario para comparación
+        const normalizedUserPhone = normalizePhone(userPhone);
+        
+        // Separar grupos donde el usuario es miembro de los demás
+        const userGroups = [];
+        const otherGroups = [];
+        const preSelectedGroup = context.preSelectedGroup;
+        
+        // Verificar cada grupo para ver si el usuario es miembro
+        for (const group of allGroups) {
+          try {
+            let isUserMember = false;
+            
+            // Intentar obtener participantes del grupo
+            try {
+              const groupChat = await client.getChatById(group.id._serialized);
+              if (groupChat) {
+                let participants = [];
+                
+                // Diferentes formas de obtener participantes según la versión de whatsapp-web.js
+                if (groupChat.participants && Array.isArray(groupChat.participants)) {
+                  participants = groupChat.participants;
+                } else if (typeof groupChat.getParticipants === 'function') {
+                  participants = await groupChat.getParticipants();
+                } else if (groupChat.groupMetadata && groupChat.groupMetadata.participants) {
+                  participants = groupChat.groupMetadata.participants;
+                }
+                
+                // Verificar si el usuario está en los participantes
+                if (participants && participants.length > 0 && normalizedUserPhone) {
+                  isUserMember = participants.some(participant => {
+                    const participantId = participant.id?._serialized || participant.id?.user || participant.id;
+                    if (!participantId) return false;
+                    
+                    // Normalizar ID del participante para comparar
+                    const participantPhone = participantId.replace('@c.us', '').replace('@g.us', '').replace('@lid', '');
+                    const normalizedParticipantPhone = normalizePhone(participantPhone);
+                    
+                    return normalizedParticipantPhone === normalizedUserPhone;
+                  });
+                }
+              }
+            } catch (error) {
+              console.warn(`[WARN] No se pudo verificar participantes del grupo ${group.id._serialized}:`, error.message);
+            }
+            
+            // Agregar a la lista correspondiente
+            if (isUserMember) {
+              userGroups.push(group);
+            } else {
+              otherGroups.push(group);
+            }
+          } catch (error) {
+            console.warn(`[WARN] Error procesando grupo ${group.id?._serialized}:`, error.message);
+            // En caso de error, agregar a otros grupos
+            otherGroups.push(group);
+          }
+        }
+        
+        // Combinar: primero grupos del usuario, luego otros
+        const groups = [...userGroups, ...otherGroups];
+        
+        if (groups.length === 0) {
+          return {
+            message: `❌ No encontré grupos de WhatsApp donde esté presente.\n\nAscribí *cancelar* si querés salir.`,
             nextModule: session.current_module,
             context: session.context
           };
@@ -478,25 +548,43 @@ Escribí *cancelar* si querés salir.`,
         // Construir lista de grupos
         let groupsList = `📱 *Seleccioná un grupo:*\n\n`;
         
-        // Si hay un grupo pre-seleccionado (viene de una mención en grupo), destacarlo
-        const preSelectedGroup = context.preSelectedGroup;
         let preSelectedIndex = -1;
+        let userGroupCount = 0;
         
         groups.forEach((group, index) => {
           const groupName = group.name || `Grupo ${index + 1}`;
           const groupId = group.id._serialized;
           
+          // Verificar si es grupo del usuario
+          const isUserGroup = index < userGroups.length;
+          if (isUserGroup) {
+            userGroupCount++;
+          }
+          
           // Verificar si es el grupo pre-seleccionado
-          if (preSelectedGroup && (groupId === preSelectedGroup.id || groupName === preSelectedGroup.name)) {
+          const isPreSelected = preSelectedGroup && (groupId === preSelectedGroup.id || groupName === preSelectedGroup.name);
+          
+          if (isPreSelected) {
             preSelectedIndex = index;
-            groupsList += `⭐ ${index + 1}️⃣ ${groupName} (recomendado)\n`;
+            groupsList += `⭐ ${index + 1}️⃣ ${groupName} (recomendado)`;
+            if (isUserGroup) {
+              groupsList += ` 👤`;
+            }
+            groupsList += `\n`;
+          } else if (isUserGroup) {
+            groupsList += `👤 ${index + 1}️⃣ ${groupName} (tus grupos)\n`;
           } else {
             groupsList += `${index + 1}️⃣ ${groupName}\n`;
           }
         });
         
+        // Agregar leyenda
+        if (userGroupCount > 0) {
+          groupsList += `\n💡 Los grupos marcados con 👤 son grupos donde sos integrante.`;
+        }
+        
         if (preSelectedIndex >= 0) {
-          groupsList += `\n💡 El grupo marcado con ⭐ es el que mencionaste en el grupo.`;
+          groupsList += `\n⭐ El grupo marcado con ⭐ es el que mencionaste en el grupo.`;
         }
         
         groupsList += `\n\nEscribí el número del grupo o *cancelar* para volver.`;
