@@ -3054,6 +3054,90 @@ async function handleGroupMention({ msg, groupChat, groupId, groupName, rawMessa
   const cleanedMessage = rawMessage.replace(/@\S+/g, ' ').trim();
   const messageLower = cleanedMessage.toLowerCase();
   
+  // Detectar comando de programar mensaje
+  if (messageLower.includes('programar') && (messageLower.includes('mensaje') || messageLower.includes('envío') || messageLower.includes('envio'))) {
+    console.log(`[DEBUG] Comando de programar mensaje detectado en grupo: "${cleanedMessage}"`);
+    
+    // Obtener teléfono del autor del mensaje
+    let authorPhone = null;
+    let authorName = 'Usuario';
+    try {
+      if (msg.author) {
+        authorPhone = msg.author.replace('@c.us', '').replace('@g.us', '').replace('@lid', '');
+      }
+      const authorContact = await msg.getContact();
+      authorName = authorContact.pushname || authorContact.name || authorContact.number || 'Usuario';
+      
+      const normalizedAuthorPhone = normalizePhone(authorPhone);
+      if (normalizedAuthorPhone) {
+        // Iniciar flujo de programación de mensajes en el contexto del grupo
+        const scheduledMessagesModule = require('./modules/scheduled-messages');
+        
+        // Crear contexto especial para grupo
+        const groupContext = {
+          isGroup: true,
+          groupId: groupId,
+          groupName: groupName,
+          groupChatId: groupId
+        };
+        
+        // Iniciar el flujo con contexto de grupo
+        const flowStart = scheduledMessagesModule.startSchedulingFlow(db, normalizedAuthorPhone, authorName);
+        
+        if (flowStart && flowStart.message && !flowStart.abort) {
+          // Actualizar la sesión con el contexto del grupo
+          const session = getSession(normalizedAuthorPhone);
+          if (session) {
+            try {
+              const context = session.context ? JSON.parse(session.context) : {};
+              context.groupContext = groupContext;
+              // Pre-seleccionar el grupo actual como destino
+              context.preSelectedGroup = {
+                id: groupId,
+                name: groupName
+              };
+              updateSession(normalizedAuthorPhone, flowStart.nextModule || 'scheduled_message_collect_text', JSON.stringify(context));
+            } catch (error) {
+              console.warn('[WARN] Error actualizando contexto de grupo:', error.message);
+            }
+          }
+          
+          // Enviar mensaje al grupo explicando que debe continuar por privado
+          await msg.reply(
+            `🗓️ *Programar Mensaje para el Grupo*\n\n` +
+            `Para programar un mensaje para este grupo (*${groupName}*), continuá la conversación por privado conmigo.\n\n` +
+            `Te acabo de enviar un mensaje privado para continuar. 👇`
+          );
+          
+          // Enviar mensaje privado al usuario con información del grupo
+          try {
+            const userChatId = `${normalizedAuthorPhone}@c.us`;
+            const enhancedMessage = flowStart.message + 
+              `\n\n💡 *Nota:* Estás programando un mensaje para el grupo *"${groupName}"*. ` +
+              `Cuando te pregunte a quién enviarlo, elegí la opción *4️⃣ Enviar a grupo de WhatsApp* y seleccioná este grupo.`;
+            await client.sendMessage(userChatId, enhancedMessage);
+            console.log(`✅ Flujo de programación iniciado para grupo ${groupName} (${groupId})`);
+          } catch (error) {
+            console.error('[ERROR] No se pudo enviar mensaje privado:', error.message);
+            await msg.reply(
+              `⚠️ No pude enviarte un mensaje privado. Por favor, escribime por privado con *"programar mensaje"* para continuar.`
+            );
+          }
+          
+          return true;
+        } else if (flowStart && flowStart.abort) {
+          // El usuario alcanzó el límite
+          await msg.reply(flowStart.message || '⚠️ Alcanzaste el límite de mensajes programados.');
+          return true;
+        }
+      }
+    } catch (error) {
+      console.error('[ERROR] Error iniciando programación de mensaje en grupo:', error);
+      await msg.reply('❌ Ocurrió un error al iniciar la programación. Por favor, intentá más tarde.');
+      return true;
+    }
+  }
+  
   // Detectar preguntas sobre clima en lenguaje natural
   if (cleanedMessage && cleanedMessage.trim()) {
     try {

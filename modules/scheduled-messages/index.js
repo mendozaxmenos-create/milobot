@@ -477,11 +477,29 @@ Escribí *cancelar* si querés salir.`,
 
         // Construir lista de grupos
         let groupsList = `📱 *Seleccioná un grupo:*\n\n`;
+        
+        // Si hay un grupo pre-seleccionado (viene de una mención en grupo), destacarlo
+        const preSelectedGroup = context.preSelectedGroup;
+        let preSelectedIndex = -1;
+        
         groups.forEach((group, index) => {
           const groupName = group.name || `Grupo ${index + 1}`;
-          groupsList += `${index + 1}️⃣ ${groupName}\n`;
+          const groupId = group.id._serialized;
+          
+          // Verificar si es el grupo pre-seleccionado
+          if (preSelectedGroup && (groupId === preSelectedGroup.id || groupName === preSelectedGroup.name)) {
+            preSelectedIndex = index;
+            groupsList += `⭐ ${index + 1}️⃣ ${groupName} (recomendado)\n`;
+          } else {
+            groupsList += `${index + 1}️⃣ ${groupName}\n`;
+          }
         });
-        groupsList += `\nEscribí el número del grupo o *cancelar* para volver.`;
+        
+        if (preSelectedIndex >= 0) {
+          groupsList += `\n💡 El grupo marcado con ⭐ es el que mencionaste en el grupo.`;
+        }
+        
+        groupsList += `\n\nEscribí el número del grupo o *cancelar* para volver.`;
 
         // Guardar grupos en el contexto
         context.stage = 'select_group';
