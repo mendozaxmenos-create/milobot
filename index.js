@@ -4795,13 +4795,24 @@ async function handleMessage(msg) {
 
       if (flowResult) {
         await msg.reply(flowResult.message);
-        if (flowResult.nextModule) {
-          console.log(`[DEBUG] Actualizando sesión a: "${flowResult.nextModule}"`);
-          updateSession(phoneToUse, flowResult.nextModule, flowResult.context || null);
-        } else {
-          console.log(`[DEBUG] Actualizando sesión a: "main"`);
-          updateSession(phoneToUse, 'main', null);
+        
+        // Actualizar sesión ANTES de retornar
+        const nextModule = flowResult.nextModule || 'main';
+        const nextContext = flowResult.context || null;
+        
+        console.log(`[DEBUG] Actualizando sesión a: "${nextModule}"`);
+        updateSession(phoneToUse, nextModule, nextContext);
+        
+        // Si se canceló (nextModule === 'main'), asegurarse de que la sesión se actualizó correctamente
+        if (nextModule === 'main') {
+          // Verificar que la sesión se actualizó correctamente
+          const updatedSession = getSession(phoneToUse);
+          if (updatedSession && updatedSession.current_module !== 'main') {
+            console.warn(`[WARN] La sesión no se actualizó correctamente. Forzando actualización...`);
+            updateSession(phoneToUse, 'main', null);
+          }
         }
+        
         return;
       } else {
         console.warn(`[WARN] flowResult es null o undefined para módulo ${currentModule}`);
