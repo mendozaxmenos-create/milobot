@@ -432,11 +432,135 @@ function saveUserLocation(db, userPhone, city, lat = null, lon = null, state = n
   return { success: true };
 }
 
+/**
+ * Responder directamente a una pregunta sobre clima
+ * Esta función se usa cuando se detecta una pregunta de clima en lenguaje natural
+ */
+async function answerWeatherQuestion(db, userPhone, userName, question, options = {}) {
+  try {
+    // Obtener ubicación del usuario
+    const storedLocation = database.getUserLocation(db, userPhone);
+    const userLocation = storedLocation ? {
+      city: storedLocation.location_city,
+      lat: storedLocation.location_lat,
+      lon: storedLocation.location_lon
+    } : null;
+
+    // Si no tiene ubicación, intentar detectar automáticamente
+    if (!userLocation || !userLocation.city) {
+      if (ENABLE_IP_AUTO_LOCATION) {
+        try {
+          const ipLocation = await weatherAPI.getLocationByIP();
+          if (ipLocation.success) {
+            const forecast = await weatherAPI.getCurrentWeather(
+              ipLocation.data.lat,
+              ipLocation.data.lon,
+              ipLocation.data.city
+            );
+            
+            if (forecast.success) {
+              const locationLabel = buildLocationLabel(ipLocation.data.city, forecast.data.country);
+              const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
+              
+              // Si pregunta específicamente por lluvia, dar respuesta directa
+              if (/llov/i.test(question.toLowerCase())) {
+                const rain = forecast.data.rain || 0;
+                const willRain = rain > 0 || /lluvia|rain|drizzle/i.test(forecast.data.condition || '');
+                const rainAnswer = willRain 
+                  ? `🌧️ *Sí, va a llover* en ${locationLabel || ipLocation.data.city}.\n\n${forecastMessage}`
+                  : `☀️ *No, no va a llover* en ${locationLabel || ipLocation.data.city}.\n\n${forecastMessage}`;
+                
+                return {
+                  message: rainAnswer,
+                  directAnswer: true
+                };
+              }
+              
+              return {
+                message: forecastMessage,
+                directAnswer: true
+              };
+            }
+          }
+        } catch (error) {
+          console.warn('[WARN] Error en detección automática para pregunta:', error.message);
+        }
+      }
+      
+      // Si no se pudo detectar, pedir ubicación
+      return {
+        message: `🌤️ Para darte el pronóstico, necesito saber tu ubicación.\n\n` +
+          `Escribí el nombre de tu ciudad o compartí tu ubicación.`,
+        directAnswer: true,
+        needsLocation: true
+      };
+    }
+
+    // Usuario tiene ubicación guardada, obtener pronóstico
+    const forecast = await weatherAPI.getCurrentWeather(
+      userLocation.lat || null,
+      userLocation.lon || null,
+      userLocation.city
+    );
+
+    if (!forecast.success) {
+      return {
+        message: `❌ No pude obtener el pronóstico para ${userLocation.city}.\n\n` +
+          `Error: ${forecast.error}`,
+        directAnswer: true
+      };
+    }
+
+    const locationLabel = buildLocationLabel(userLocation.city, forecast.data.country);
+    const forecastMessage = formatWeatherMessage(forecast.data, userName, locationLabel);
+
+    // Si pregunta específicamente por lluvia, dar respuesta directa
+    if (/llov/i.test(question.toLowerCase())) {
+      const rain = forecast.data.rain || 0;
+      const willRain = rain > 0 || /lluvia|rain|drizzle/i.test(forecast.data.condition || '');
+      const rainAnswer = willRain 
+        ? `🌧️ *Sí, va a llover* en ${locationLabel || userLocation.city}.\n\n${forecastMessage}`
+        : `☀️ *No, no va a llover* en ${locationLabel || userLocation.city}.\n\n${forecastMessage}`;
+      
+      return {
+        message: rainAnswer,
+        directAnswer: true
+      };
+    }
+
+    // Si pregunta por temperatura específicamente
+    if (/(temp|grados|calor|frío)/i.test(question.toLowerCase())) {
+      const temp = Math.round(forecast.data.temp);
+      const feelsLike = Math.round(forecast.data.feelsLike);
+      const tempAnswer = `🌡️ En ${locationLabel || userLocation.city} la temperatura es de *${temp}°C* (sensación térmica: *${feelsLike}°C*).\n\n${forecastMessage}`;
+      
+      return {
+        message: tempAnswer,
+        directAnswer: true
+      };
+    }
+
+    // Respuesta general
+    return {
+      message: forecastMessage,
+      directAnswer: true
+    };
+
+  } catch (error) {
+    console.error('[ERROR] Error respondiendo pregunta de clima:', error);
+    return {
+      message: `❌ Ocurrió un error al obtener el pronóstico. Por favor, intentá de nuevo.`,
+      directAnswer: true
+    };
+  }
+}
+
 module.exports = {
   getWeatherForecast,
   saveUserLocation,
   formatWeatherMessage,
   buildWeatherMenu,
-  processSharedLocation
+  processSharedLocation,
+  answerWeatherQuestion
 };
 

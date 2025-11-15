@@ -3049,24 +3049,70 @@ async function handleKeywordShortcutAction({ shortcut, msg, userPhone, userName,
 
 async function handleGroupMention({ msg, groupChat, groupId, groupName, rawMessage, inviterPhone, inviterName }) {
   console.log(`[DEBUG] handleGroupMention: procesando mensaje: "${rawMessage}"`);
+  
+  // Limpiar el mensaje de menciones para análisis
+  const cleanedMessage = rawMessage.replace(/@\S+/g, ' ').trim();
+  const messageLower = cleanedMessage.toLowerCase();
+  
+  // Detectar preguntas sobre clima en lenguaje natural
+  if (cleanedMessage && cleanedMessage.trim()) {
+    try {
+      const weatherIntentDetector = require('./modules/weather-module/intent-detector');
+      const weatherIntent = weatherIntentDetector.detectWeatherIntent(cleanedMessage);
+      
+      if (weatherIntent) {
+        console.log(`[DEBUG] Pregunta sobre clima detectada en grupo: "${cleanedMessage}"`);
+        
+        // Obtener teléfono del autor del mensaje
+        let authorPhone = null;
+        let authorName = 'Usuario';
+        try {
+          if (msg.author) {
+            authorPhone = msg.author.replace('@c.us', '').replace('@g.us', '');
+          }
+          const authorContact = await msg.getContact();
+          authorName = authorContact.pushname || authorContact.name || authorContact.number || 'Usuario';
+          
+          const normalizedAuthorPhone = normalizePhone(authorPhone);
+          if (normalizedAuthorPhone) {
+            const weatherModule = require('./modules/weather-module');
+            const weatherAnswer = await weatherModule.answerWeatherQuestion(
+              db,
+              normalizedAuthorPhone,
+              authorName,
+              cleanedMessage
+            );
+            
+            if (weatherAnswer && weatherAnswer.directAnswer) {
+              await msg.reply(weatherAnswer.message);
+              return true;
+            }
+          }
+        } catch (error) {
+          console.warn('[WARN] Error respondiendo pregunta de clima en grupo:', error.message);
+        }
+      }
+    } catch (error) {
+      console.warn('[WARN] Error detectando pregunta de clima en grupo:', error.message);
+    }
+  }
+  
   const parsed = parseGroupExpenseMessage(rawMessage);
   if (!parsed) {
     console.log(`[DEBUG] handleGroupMention: mensaje no parseado, podría ser un saludo u otro comando`);
     
     // Si el bot fue mencionado pero el mensaje no es un comando reconocido, responder con ayuda
-    const messageLower = rawMessage.toLowerCase().trim();
-    const cleanedMessage = rawMessage.replace(/@\S+/g, ' ').trim().toLowerCase();
-    
     // Responder a saludos comunes
-    if (cleanedMessage.includes('hola') || cleanedMessage.includes('hi') || cleanedMessage.includes('hello') || 
-        cleanedMessage.includes('buenos días') || cleanedMessage.includes('buenas') || cleanedMessage.includes('buenas tardes') ||
-        cleanedMessage.includes('buenas noches')) {
+    if (messageLower.includes('hola') || messageLower.includes('hi') || messageLower.includes('hello') || 
+        messageLower.includes('buenos días') || messageLower.includes('buenas') || messageLower.includes('buenas tardes') ||
+        messageLower.includes('buenas noches')) {
       const helpMessage = `👋 ¡Hola! Soy *Milo*, tu asistente de gastos.\n\n` +
         `💡 *Comandos disponibles:*\n` +
         `• Mencioname con "crea el grupo [nombre]" para crear un grupo de gastos\n` +
         `• /gasto 5000 pizza - Agregar un gasto\n` +
         `• /resumen - Ver resumen de gastos\n` +
-        `• /calcular - Ver división de gastos\n\n` +
+        `• /calcular - Ver división de gastos\n` +
+        `• Preguntame sobre el clima: "va a llover hoy?", "qué pronóstico hace?"\n\n` +
         `_También podés escribirme por privado con *hola* o *menu* para más opciones._`;
       await msg.reply(helpMessage);
       return true;
@@ -3080,6 +3126,10 @@ async function handleGroupMention({ msg, groupChat, groupId, groupName, rawMessa
       `• /gasto 5000 pizza - Agregar un gasto\n` +
       `• /resumen - Ver resumen de gastos\n` +
       `• /calcular - Ver división de gastos\n\n` +
+      `*Preguntas sobre clima:*\n` +
+      `• "va a llover hoy?"\n` +
+      `• "qué pronóstico hace?"\n` +
+      `• "cómo está el clima?"\n\n` +
       `_También podés escribirme por privado con *hola* o *menu* para más opciones._`;
     await msg.reply(helpMessage);
     return true;
@@ -4190,6 +4240,35 @@ async function handleMessage(msg) {
   }
 
   const userInfo = registerUser(normalizedUserPhone, userName);
+  
+  // Detectar preguntas sobre clima en lenguaje natural (antes de procesar otros comandos)
+  if (messageText && messageText.trim()) {
+    try {
+      const weatherIntentDetector = require('./modules/weather-module/intent-detector');
+      const weatherIntent = weatherIntentDetector.detectWeatherIntent(messageText);
+      
+      if (weatherIntent) {
+        console.log(`[DEBUG] Pregunta sobre clima detectada: "${messageText}"`);
+        const weatherModule = require('./modules/weather-module');
+        
+        // Obtener respuesta directa
+        const weatherAnswer = await weatherModule.answerWeatherQuestion(
+          db,
+          normalizedUserPhone,
+          userName,
+          messageText
+        );
+        
+        if (weatherAnswer && weatherAnswer.directAnswer) {
+          await msg.reply(weatherAnswer.message);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn('[WARN] Error detectando pregunta de clima:', error.message);
+      // Continuar con el flujo normal si falla
+    }
+  }
   
   // Procesar mensaje de ubicación compartida
   if (isLocation) {
